@@ -1,0 +1,23 @@
+<robot name="MJC">
+    <link name="base">
+        <inertial>
+            <origin xyz="0 0 0" />
+            <mass value="1115" />
+            <inertia ixx="185" ixy="0" 
+                     ixz="0" iyy="185" 
+                     iyz="0" izz="185" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" />
+            <geometry>
+                <mesh filename="mjc.obj" />
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" />
+            <geometry>
+                <box size="2. 2. 2." />
+            </geometry>
+        </collision>
+    </link>
+</robot>
