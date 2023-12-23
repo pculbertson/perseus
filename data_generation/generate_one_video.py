@@ -20,8 +20,11 @@ import logging
 
 import bpy
 import kubric as kb
+import perseus as ps
+
 from kubric.simulator import PyBullet
-from kubric.renderer import Blender
+from custom_renderer import CustomBlender as Blender
+from local_asset_source import LocalAssetSource
 import numpy as np
 
 
@@ -31,6 +34,7 @@ STATIC_SPAWN_REGION = [(-7, -7, 0), (7, 7, 10)]
 DYNAMIC_SPAWN_REGION = [(-5, -5, 1), (5, 5, 5)]
 MJC_SPAWN_REGION = [(-2.5, -2.5, 0), (2.5, 2.5, 5)]
 VELOCITY_RANGE = [(-4.0, -4.0, 0.0), (4.0, 4.0, 0.0)]
+MJC_VELOCITY_RANGE = [(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]
 
 # --- CLI arguments
 parser = kb.ArgumentParser()
@@ -76,16 +80,14 @@ parser.add_argument("--max_motion_blur", type=float, default=0.0)
 parser.add_argument(
     "--kubasic_assets",
     type=str,
-    default="gs://kubric-public/assets/KuBasic/KuBasic.json",
+    default="data_generation/assets/KuBasic.json",
 )
 parser.add_argument(
     "--hdri_assets",
     type=str,
-    default="gs://kubric-public/assets/HDRI_haven/HDRI_haven.json",
+    default="data_generation/assets/HDRI_haven.json",
 )
-parser.add_argument(
-    "--gso_assets", type=str, default="gs://kubric-public/assets/GSO/GSO.json"
-)
+parser.add_argument("--gso_assets", type=str, default="data_generation/assets/GSO.json")
 parser.add_argument("--save_state", dest="save_state", action="store_true")
 parser.set_defaults(save_state=False, frame_end=24, frame_rate=12, resolution=256)
 FLAGS = parser.parse_args()
@@ -105,9 +107,15 @@ renderer = Blender(
     samples_per_pixel=64,
     motion_blur=motion_blur,
 )
-kubasic = kb.AssetSource.from_manifest(FLAGS.kubasic_assets)
-gso = kb.AssetSource.from_manifest(FLAGS.gso_assets)
-hdri_source = kb.AssetSource.from_manifest(FLAGS.hdri_assets)
+
+# Setup some other stuff for performance.
+renderer.blender_scene.render.use_persistent_data = True
+logging.info("use_gpu: %s", renderer.use_gpu)
+logging.info("Blender device: %s", renderer.blender_scene.cycles.device)
+
+kubasic = LocalAssetSource.from_manifest(FLAGS.kubasic_assets)
+gso = LocalAssetSource.from_manifest(FLAGS.gso_assets)
+hdri_source = LocalAssetSource.from_manifest(FLAGS.hdri_assets)
 
 
 # --- Populate the scene
@@ -306,7 +314,7 @@ obj = kb.FileBasedObject(
     bounds=((-1, -1, -1), (1, 1, 1)),
     simulation_filename="data_generation/assets/mjc.urdf",
 )
-obj.velocity = rng.uniform(*VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
+obj.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
 obj.scale = rng.uniform(0.5, 1.5) / np.max(obj.bounds[1] - obj.bounds[0])
 scene += obj
 kb.move_until_no_overlap(obj, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng)
