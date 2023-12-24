@@ -272,6 +272,7 @@ for i in range(num_static_objects):
     obj.friction = 1.0
     obj.restitution = 0.0
     obj.metadata["is_dynamic"] = False
+    obj.metadata["render_filename"] = obj.render_filename
     logging.info("    Added %s at %s", obj.asset_id, obj.position)
 
 
@@ -307,15 +308,19 @@ for i in range(num_dynamic_objects):
     obj.velocity = rng.uniform(*VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
     obj.metadata["is_dynamic"] = True
     logging.info("    Added %s at %s", obj.asset_id, obj.position)
+    obj.metadata["render_filename"] = obj.render_filename
 
 obj = kb.FileBasedObject(
-    asset_id="custom",
+    asset_id="mjc",
     render_filename="data_generation/assets/mjc.glb",
     bounds=((-1, -1, -1), (1, 1, 1)),
     simulation_filename="data_generation/assets/mjc.urdf",
 )
 obj.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
 obj.scale = rng.uniform(0.5, 1.5) / np.max(obj.bounds[1] - obj.bounds[0])
+obj.metadata["scale"] = scale
+obj.metadata["is_dynamic"] = True
+obj.metadata["render_filename"] = obj.render_filename
 scene += obj
 kb.move_until_no_overlap(obj, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng)
 
@@ -338,7 +343,7 @@ if FLAGS.save_state:
 
 
 logging.info("Rendering the scene ...")
-data_stack = renderer.render()
+data_stack = renderer.render(return_layers=("rgba", "depth", "segmentation"))
 
 # --- Postprocessing
 kb.compute_visibility(data_stack["segmentation"], scene.assets)
