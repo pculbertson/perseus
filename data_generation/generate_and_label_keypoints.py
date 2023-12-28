@@ -6,7 +6,7 @@ import numpy as np
 import multiprocessing
 import torch
 from tqdm import tqdm
-from data_generation.data_utils import to_SE3, get_pixel_coordinates
+from data_generation.data_utils import to_SE3, get_pixel_coordinates, reorder_quaternion
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -20,6 +20,13 @@ parser.add_argument(
     type=int,
     help="Number of keypoints to generate. Default: 32.",
     default=32,
+)
+
+parser.add_argument(
+    "--debug-plot",
+    action="store_true",
+    help="Plot debug images. Default: False.",
+    default=False,
 )
 
 
@@ -73,25 +80,32 @@ def generate_data(args):
         metadata = json.load(f)
 
     # Get camera intrinsics and extrinsics.
-    camera_matrix = torch.as_tensor(metadata["camera"]["K"])
+    fov = metadata["camera"]["field_of_view"]
+    H = metadata["flags"]["resolution"]
+    W = metadata["flags"]["resolution"]
     camera_positions = torch.as_tensor(metadata["camera"]["positions"])
-    camera_quaternions = torch.as_tensor(metadata["camera"]["quaternions"])
+    camera_quaternions = reorder_quaternion(
+        torch.as_tensor(metadata["camera"]["quaternions"])
+    )
     camera_poses = to_SE3(camera_positions, camera_quaternions)
 
     # Get object poses.
     object_dict = [
         dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id
     ][0]
+    print(object_dict.keys())
+    print(metadata["instances"])
+    object_abs_scale = torch.as_tensor(object_dict["abs_scale"])
     object_positions = torch.as_tensor(object_dict["positions"])
-    object_quaternions = torch.as_tensor(object_dict["quaternions"])
+    object_quaternions = reorder_quaternion(torch.as_tensor(object_dict["quaternions"]))
     object_poses = to_SE3(object_positions, object_quaternions)
 
     # Get keypoints.
-    keypoints = torch.as_tensor(args.keypoints)
+    keypoints = torch.as_tensor(args.keypoints).float() * object_abs_scale
 
     # Get pixel coordinates.
     pixel_coordinates = get_pixel_coordinates(
-        keypoints, object_poses, camera_poses, camera_matrix
+        keypoints, object_poses, camera_poses, fov, H, W
     )
 
     # Save pixel coordinates.
@@ -103,8 +117,66 @@ def generate_data(args):
         json.dump(pixel_coordinates.tolist(), f)
 
 
+def plot_data(args):
+    # Debug plotting to check that everything is working.
+    import matplotlib.pyplot as plt
+
+    # Load pixel coordinates.
+    pixel_coordinates_filename = os.path.join(
+        args.job_dir, args.job_id, f"{args.asset_id}_pixel_coordinates.json"
+    )
+
+    with open(pixel_coordinates_filename, "r") as f:
+        pixel_coordinates = json.load(f)
+
+    # Load all rgb images in job dir.
+    rgb_filenames = [
+        os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png")
+        for ii in range(24)
+    ]
+
+    # Create debug directory if it doesn't exist.
+    if not os.path.exists(os.path.join(args.job_dir, "debug")):
+        os.makedirs(os.path.join(args.job_dir, "debug"))
+
+    # Plot pixel coordinates on top of rgb images.
+    for ii, (rgb_filename, pixel_coordinate) in enumerate(
+        zip(rgb_filenames, pixel_coordinates)
+    ):
+        rgb = plt.imread(rgb_filename)
+        pixel_coordinate = np.array(pixel_coordinate)
+
+        fig, ax = plt.subplots()
+        ax.imshow(rgb, aspect="auto")
+        plt.axis("off")
+
+        # Scatter points with different color for each keypoint.
+        for jj in range(args.num_keypoints):
+            plt.scatter(
+                pixel_coordinate[jj, 0],
+                pixel_coordinate[jj, 1],
+                c=jj,
+                s=10,
+            )
+
+        plt.savefig(
+            os.path.join(args.job_dir, "debug", f"debug_keypoints_{ii}.png"),
+            bbox_inches="tight",
+            pad_inches=0,
+        )
+        plt.close()
+
+
 def main(args):
-    job_ids = [args.job_id] if args.job_id else os.listdir(args.job_dir)
+    job_ids = (
+        [args.job_id]
+        if args.job_id
+        else [
+            ff
+            for ff in os.listdir(args.job_dir)
+            if os.path.isdir(os.path.join(args.job_dir, ff))
+        ]
+    )
 
     args_list = [args for _ in range(len(job_ids))]
     for jj, aa in zip(job_ids, args_list):
@@ -116,6 +188,9 @@ def main(args):
 
     for aa in args_list:
         generate_data(aa)
+
+    if args.debug_plot:
+        plot_data(args_list[-1])
 
 
 if __name__ == "__main__":
