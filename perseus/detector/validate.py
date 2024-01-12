@@ -61,7 +61,9 @@ def validate(cfg: ValConfig):
             fig, ax = plt.subplots()
 
             # Plot.
-            ax.imshow(image[0].permute(1, 2, 0).cpu().numpy().astype("uint8"))
+            ax.imshow(
+                image[0].permute(1, 2, 0).cpu().numpy().astype("uint8")[:, :, ::-1]
+            )
 
             # Plot ground truth keypoints with jet colormap.
             jet_colors = plt.cm.jet(np.linspace(0, 1, model.n_keypoints))
