@@ -46,17 +46,8 @@ def get_pixel_coordinates(
 
     camera_poses = camera_poses @ blender_to_opencv
 
-    print(f"B2ocv shape: {blender_to_opencv.shape}")
-    print(f"Camera poses shape: {camera_poses.shape}")
-
     # Convert keypoints to world coordinates.
     camera_to_object = camera_poses.Inv() @ object_poses
-
-    # Debug
-    print(f"Camera position: {camera_poses[0].translation()}")
-    print(f"Object position: {object_poses[0].translation()}")
-    print(f"Object to camera pose: {camera_to_object[0].Inv().translation()}")
-    print(f"Object up: {object_poses.rotation().Act(torch.tensor([0, 0, 1]).float())}")
 
     # Compute intrinsics matrix.
     f_x = W / (2 * np.tan(fov / 2))

@@ -7,6 +7,10 @@ import multiprocessing
 import torch
 from tqdm import tqdm
 from data_generation.data_utils import to_SE3, get_pixel_coordinates, reorder_quaternion
+import h5py
+import cv2
+import numpy as np
+import copy
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -20,6 +24,13 @@ parser.add_argument(
     type=int,
     help="Number of keypoints to generate. Default: 32.",
     default=32,
+)
+
+parser.add_argument(
+    "--train-frac",
+    type=float,
+    help="Fraction of data to use for training. Default: 0.8.",
+    default=0.8,
 )
 
 parser.add_argument(
@@ -93,8 +104,6 @@ def generate_data(args):
     object_dict = [
         dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id
     ][0]
-    print(object_dict.keys())
-    print(metadata["instances"])
     object_abs_scale = torch.as_tensor(object_dict["abs_scale"])
     object_positions = torch.as_tensor(object_dict["positions"])
     object_quaternions = reorder_quaternion(torch.as_tensor(object_dict["quaternions"]))
@@ -108,13 +117,31 @@ def generate_data(args):
         keypoints, object_poses, camera_poses, fov, H, W
     )
 
-    # Save pixel coordinates.
-    pixel_coordinates_filename = os.path.join(
-        args.job_dir, args.job_id, f"{args.asset_id}_pixel_coordinates.json"
-    )
+    # Load all rgb images in job dir.
+    rgb_filenames = [
+        os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png")
+        for ii in range(24)
+    ]
 
-    with open(pixel_coordinates_filename, "w") as f:
-        json.dump(pixel_coordinates.tolist(), f)
+    # Create an empty list to store the images
+    rgb_images = []
+
+    # Iterate over each RGB image filename
+    for filename in rgb_filenames:
+        # Read the image using OpenCV
+        image = cv2.imread(filename)
+
+        # Append the image to the list
+        rgb_images.append(image)
+
+    # Convert the list of images to a numpy array
+    rgb_images_array = np.array(rgb_images)
+
+    return (
+        rgb_images_array,
+        pixel_coordinates.cpu().numpy(),
+        object_poses.data.cpu().numpy(),
+    )
 
 
 def plot_data(args):
@@ -178,7 +205,7 @@ def main(args):
         ]
     )
 
-    args_list = [args for _ in range(len(job_ids))]
+    args_list = [copy.deepcopy(args) for _ in range(len(job_ids))]
     for jj, aa in zip(job_ids, args_list):
         aa.job_id = jj
 
@@ -187,10 +214,63 @@ def main(args):
         aa.keypoints = keypoints
 
     for aa in args_list:
-        generate_data(aa)
+        print(aa.job_id)
+
+    image_list = []
+    pixel_coords_list = []
+    obj_poses_list = []
+
+    for aa in args_list:
+        try:
+            images, pixel_coords, obj_poses = generate_data(aa)
+        except Exception as e:
+            print(f"Failed to generate data for job {aa.job_id}.")
+            print(e)
+            continue
+        image_list.append(images)
+        pixel_coords_list.append(pixel_coords)
+        obj_poses_list.append(obj_poses)
+
+    # Concatenate data and cast to torch.
+    image_list = np.concatenate(image_list, axis=0)
+    pixel_coords_list = np.concatenate(pixel_coords_list, axis=0)
+    obj_poses_list = np.concatenate(obj_poses_list, axis=0)
+
+    # Save data as hdf5 file.
+    split_idx = int(len(image_list) * args.train_frac)
+
+    data_filename = os.path.join(args.job_dir, f"{args.asset_id}_data.hdf5")
+    with h5py.File(data_filename, "w") as f:
+        # Store training data.
+        train = f.create_group("train")
+        train.create_dataset("images", data=torch.from_numpy(image_list[:split_idx]))
+        train.create_dataset(
+            "pixel_coordinates",
+            data=torch.from_numpy(pixel_coords_list[:split_idx]),
+        )
+        train.create_dataset(
+            "object_poses", data=torch.from_numpy(obj_poses_list[:split_idx])
+        )
+
+        # Store test data.
+        test = f.create_group("test")
+        test.create_dataset("images", data=torch.from_numpy(image_list[split_idx:]))
+        test.create_dataset(
+            "pixel_coordinates",
+            data=torch.from_numpy(pixel_coords_list[split_idx:]),
+        )
+        test.create_dataset(
+            "object_poses", data=torch.from_numpy(obj_poses_list[split_idx:])
+        )
+
+        # Store hyperparameters.
+        f.attrs["num_keypoints"] = args.num_keypoints
+        f.attrs["train_frac"] = args.train_frac
+        f.attrs["H"] = image_list.shape[1]
+        f.attrs["W"] = image_list.shape[2]
 
     if args.debug_plot:
-        plot_data(args_list[-1])
+        plot_data(args_list[0])
 
 
 if __name__ == "__main__":
