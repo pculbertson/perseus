@@ -32,9 +32,9 @@ import numpy as np
 # the region in which to place objects [(min), (max)]
 STATIC_SPAWN_REGION = [(-7, -7, 0), (7, 7, 10)]
 DYNAMIC_SPAWN_REGION = [(-5, -5, 1), (5, 5, 5)]
-MJC_SPAWN_REGION = [(-2.5, -2.5, 0), (2.5, 2.5, 5)]
+MJC_SPAWN_REGION = [(-4.0, -4.0, 1.0), (4.0, 4.0, 0.0)]
 VELOCITY_RANGE = [(-4.0, -4.0, 0.0), (4.0, 4.0, 0.0)]
-MJC_VELOCITY_RANGE = [(-1.0, -1.0, -1.0), (1.0, 1.0, 1.0)]
+MJC_VELOCITY_RANGE = [(-1.0, -1.0, -0.5), (1.0, 1.0, 1.0)]
 
 # --- CLI arguments
 parser = kb.ArgumentParser()
@@ -73,7 +73,7 @@ parser.add_argument(
     "--camera", choices=["fixed_random", "linear_movement"], default="fixed_random"
 )
 parser.add_argument("--max_camera_movement", type=float, default=4.0)
-parser.add_argument("--max_motion_blur", type=float, default=0.0)
+parser.add_argument("--max_motion_blur", type=float, default=1.0)
 
 
 # Configuration for the source of the assets
@@ -293,6 +293,24 @@ for obj in scene.foreground_assets:
 dome.friction = FLAGS.floor_friction
 dome.restitution = FLAGS.floor_restitution
 
+obj = kb.FileBasedObject(
+    asset_id="mjc",
+    render_filename="data_generation/assets/mjc.glb",
+    bounds=((-1, -1, -1), (1, 1, 1)),
+    simulation_filename="data_generation/assets/mjc.urdf",
+)
+obj.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
+abs_scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
+obj.scale = abs_scale
+obj.metadata["scale"] = scale
+obj.metadata["abs_scale"] = abs_scale
+obj.metadata["is_dynamic"] = True
+obj.metadata["render_filename"] = obj.render_filename
+scene += obj
+kb.move_until_no_overlap(
+    obj, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng, max_trials=1000
+)
+
 
 # Add DYNAMIC objects
 num_dynamic_objects = rng.randint(
@@ -312,22 +330,6 @@ for i in range(num_dynamic_objects):
     obj.metadata["is_dynamic"] = True
     logging.info("    Added %s at %s", obj.asset_id, obj.position)
     obj.metadata["render_filename"] = obj.render_filename
-
-obj = kb.FileBasedObject(
-    asset_id="mjc",
-    render_filename="data_generation/assets/mjc.glb",
-    bounds=((-1, -1, -1), (1, 1, 1)),
-    simulation_filename="data_generation/assets/mjc.urdf",
-)
-obj.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
-abs_scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
-obj.scale = abs_scale
-obj.metadata["scale"] = scale
-obj.metadata["abs_scale"] = abs_scale
-obj.metadata["is_dynamic"] = True
-obj.metadata["render_filename"] = obj.render_filename
-scene += obj
-kb.move_until_no_overlap(obj, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng)
 
 
 if FLAGS.save_state:
