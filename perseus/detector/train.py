@@ -1,15 +1,23 @@
+import copy
 from dataclasses import dataclass
 import numpy as np
 import os
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import tyro
+from typing import Tuple
 from wandb.util import generate_id
 import wandb
 
 from perseus.detector.models import KeypointCNN, KeypointGaussian
-from perseus.detector.data import KeypointDataset
+from perseus.detector.data import (
+    KeypointDataset,
+    KeypointDatasetConfig,
+    AugmentationConfig,
+    KeypointAugmentation,
+)
 
 
 @dataclass(frozen=True)
@@ -17,20 +25,23 @@ class TrainConfig:
     """Configuration for training."""
 
     # Training parameters.
-    batch_size: int = 32
+    batch_size: int = 128
     learning_rate: float = 1e-3
     n_epochs: int = 100
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    num_workers: int = 1
+    num_workers: int = 16
 
     output_type: str = "regression"
 
-    val_epochs: int = 3
+    val_epochs: int = 1
     print_epochs: int = 1
     save_epochs: int = 5
 
     # Dataset parameters.
-    dataset_path: str = "data/2023-12-28_20-34-56/mjc_data.hdf5"
+    dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
+
+    # Data augmentation parameters.
+    augmentation_config: AugmentationConfig = AugmentationConfig()
 
     # Model parameters.
     n_keypoints: int = 8
@@ -42,19 +53,25 @@ class TrainConfig:
 
 def train(cfg: TrainConfig):
     # Create dataloader.
-    train_dataset = KeypointDataset(cfg.dataset_path, train=True)
+
+    train_dataset = KeypointDataset(cfg.dataset_config, train=True)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
     )
 
-    val_dataset = KeypointDataset(cfg.dataset_path, train=False)
+    train_augment = KeypointAugmentation(cfg.augmentation_config, train=True)
+
+    val_dataset = KeypointDataset(cfg.dataset_config, train=False)
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
         shuffle=True,
     )
+    val_augment = KeypointAugmentation(
+        cfg.augmentation_config, train=False
+    )  # Still create this to do pixel coordinate conversion.
 
     # Initialize model.
     if cfg.output_type == "gaussian":
@@ -68,6 +85,9 @@ def train(cfg: TrainConfig):
 
     # Initialize optimizer.
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    scheduler = ReduceLROnPlateau(
+        optimizer, "min", patience=5, factor=0.5, verbose=True
+    )
 
     # Initialize loss function.
     if cfg.output_type == "gaussian":
@@ -98,7 +118,7 @@ def train(cfg: TrainConfig):
                 )
 
     elif cfg.output_type == "regression":
-        loss_fn = nn.SmoothL1Loss(beta=0.25)
+        loss_fn = nn.SmoothL1Loss(beta=1.0)
 
     # Initialize wandb.
     wandb_id = generate_id()
@@ -123,6 +143,9 @@ def train(cfg: TrainConfig):
             object_poses = object_poses.to(cfg.device)
             images = images.to(cfg.device)
 
+            # Augment data.
+            images, pixel_coordinates = train_augment(images, pixel_coordinates)
+
             # Forward pass.
             pred = model(images)
 
@@ -136,7 +159,7 @@ def train(cfg: TrainConfig):
             loss.backward()
 
             # Clip gradients.
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
             optimizer.step()
 
@@ -161,6 +184,9 @@ def train(cfg: TrainConfig):
                     object_poses = object_poses.to(cfg.device)
                     images = images.to(cfg.device)
 
+                    # Augment data.
+                    images, pixel_coordinates = val_augment(images, pixel_coordinates)
+
                     # Forward pass.
                     pred = model(images)
 
@@ -174,6 +200,9 @@ def train(cfg: TrainConfig):
                 # Log to wandb.
                 wandb.log({"val_loss": val_loss})
                 print(f"Validation loss: {val_loss}")
+
+                # Update learning rate.
+                scheduler.step(val_loss)
 
         if epoch % cfg.save_epochs == 0:
             # Save model.
