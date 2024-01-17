@@ -8,9 +8,9 @@ import torch
 from tqdm import tqdm
 from data_generation.data_utils import to_SE3, get_pixel_coordinates, reorder_quaternion
 import h5py
-import cv2
 import numpy as np
 import copy
+from PIL import Image
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -129,16 +129,13 @@ def generate_data(args):
     # Iterate over each RGB image filename
     for filename in rgb_filenames:
         # Read the image using OpenCV
-        image = cv2.imread(filename)
+        image = Image.open(filename).convert("RGB")
 
         # Append the image to the list
-        rgb_images.append(image)
-
-    # Convert the list of images to a numpy array
-    rgb_images_array = np.array(rgb_images)
+        rgb_images.append(np.array(image))
 
     return (
-        rgb_images_array,
+        rgb_images,
         pixel_coordinates.cpu().numpy(),
         object_poses.data.cpu().numpy(),
     )
