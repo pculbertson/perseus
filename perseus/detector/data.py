@@ -67,6 +67,12 @@ class KeypointDataset(Dataset):
                 torch.from_numpy(self.dataset["object_poses"][()])
             )
             self.images = self.dataset["images"][()][..., :3]
+            self.object_scales = torch.from_numpy(self.dataset["object_scales"][()])
+            self.camera_poses = pp.SE3(self.dataset["camera_poses"][()])
+            self.camera_intrinsics = torch.from_numpy(
+                self.dataset["camera_intrinsics"][()]
+            )
+            self.image_filenames = self.dataset["image_filenames"][()]
 
             print(f"Images shape: {self.images.shape}")
 
@@ -77,7 +83,15 @@ class KeypointDataset(Dataset):
         image = kornia.utils.image_to_tensor(self.images[idx]) / 255.0
         pixel_coordinates = self.pixel_coordinates[idx].clone()
 
-        return (pixel_coordinates, self.object_poses[idx], image)
+        return {
+            "image": image,
+            "pixel_coordinates": pixel_coordinates,
+            "object_pose": self.object_poses[idx],
+            "camera_pose": self.camera_poses[idx],
+            "object_scale": self.object_scales[idx],
+            "camera_intrinsics": self.camera_intrinsics[idx],
+            "image_filename": self.image_filenames[idx],
+        }
 
 
 class KeypointAugmentation(torch.nn.Module):
