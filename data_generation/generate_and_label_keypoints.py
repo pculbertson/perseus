@@ -256,25 +256,25 @@ def main(args):
             print(f"Failed to generate data for job {aa.job_id}.")
             print(e)
             continue
-        image_list.append(images)
-        pixel_coords_list.append(pixel_coords)
-        obj_poses_list.append(obj_poses)
-        obj_scales_list.append(obj_scales)
-        camera_poses_list.append(camera_poses)
-        camera_intrinsics_list.append(camera_intrinsics)
-        image_filename_list.append(image_filenames)
+        image_list.append(np.stack(images))
+        pixel_coords_list.append(np.stack(pixel_coords))
+        obj_poses_list.append(np.stack(obj_poses))
+        obj_scales_list.append(np.stack(obj_scales))
+        camera_poses_list.append(np.stack(camera_poses))
+        camera_intrinsics_list.append(np.stack(camera_intrinsics))
+        image_filename_list.append(np.stack(image_filenames))
 
     # Concatenate data and cast to torch.
-    image_list = np.concatenate(image_list, axis=0)
-    pixel_coords_list = np.concatenate(pixel_coords_list, axis=0)
-    obj_poses_list = np.concatenate(obj_poses_list, axis=0)
-    obj_scales_list = np.concatenate(obj_scales_list, axis=0)
-    camera_poses_list = np.concatenate(camera_poses_list, axis=0)
-    camera_intrinsics_list = np.concatenate(camera_intrinsics_list, axis=0)
-    image_filename_list = np.concatenate(image_filename_list, axis=0).astype("S")
+    image_list = np.stack(image_list, axis=0)
+    pixel_coords_list = np.stack(pixel_coords_list, axis=0)
+    obj_poses_list = np.stack(obj_poses_list, axis=0)
+    obj_scales_list = np.stack(obj_scales_list, axis=0)
+    camera_poses_list = np.stack(camera_poses_list, axis=0)
+    camera_intrinsics_list = np.stack(camera_intrinsics_list, axis=0)
+    image_filename_list = np.stack(image_filename_list, axis=0).astype("S")
 
     # Save data as hdf5 file.
-    split_idx = int(len(image_list) * args.train_frac)
+    split_idx = int(image_list.shape[0] * args.train_frac)
 
     data_filename = os.path.join(args.job_dir, f"{args.asset_id}_data.hdf5")
     with h5py.File(data_filename, "w") as f:
