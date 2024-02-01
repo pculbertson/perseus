@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import gtsam
-from perseus.smoother.factors import DynamicsFactor
+from perseus.smoother.factors import PoseDynamicsFactor, ConstantVelocityFactor
 import pypose as pp
 import torch
 from gtsam.symbol_shorthand import X, V, W
@@ -14,26 +14,36 @@ torch.manual_seed(0)
 initial_estimate = gtsam.Values()
 rand_pose1 = gtsam.Pose3().expmap(np.random.randn(6))
 rand_pose2 = gtsam.Pose3().expmap(np.random.randn(6))
-rand_vel = np.random.randn(3)
-rand_ang_vel = np.random.randn(3)
+rand_vel1 = np.random.randn(3)
+rand_ang_vel1 = np.random.randn(3)
+rand_vel2 = np.random.randn(3)
+rand_ang_vel2 = np.random.randn(3)
 
 # Store these in the init. data.
 initial_estimate.insert(X(0), rand_pose1)
-initial_estimate.insert(V(0), rand_vel)
-initial_estimate.insert(W(0), rand_ang_vel)
+initial_estimate.insert(V(0), rand_vel1)
+initial_estimate.insert(W(0), rand_ang_vel1)
 initial_estimate.insert(X(1), rand_pose2)
+initial_estimate.insert(V(1), rand_vel2)
+initial_estimate.insert(W(1), rand_ang_vel2)
 
 # Pick a dt.
 dt = 1e-1
 
-# Create a factor to be tested.
-dyn_factor = DynamicsFactor(
+# Create a pose dynamics factor to be tested.
+dyn_factor = PoseDynamicsFactor(
     gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1])),
     X(0),
     W(0),
     V(0),
     X(1),
     dt,
+)
+
+vel_fac = ConstantVelocityFactor(
+    gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-1, 1e-1, 1e-1])),
+    V(0),
+    V(1),
 )
 
 
@@ -55,16 +65,25 @@ def pypose_error(x0, w0, v0, x1, dx0, dw0, dv0, dx1):
     return flip(rel_pose.Log())
 
 
+def torch_constant_vel_error(v1, v2):
+    return v2 - v1
+
+
 # Create pytorch data.
 X0 = initial_estimate.atPose3(X(0))
 X1 = initial_estimate.atPose3(X(1))
 W0 = initial_estimate.atVector(W(0))
 V0 = initial_estimate.atVector(V(0))
+W1 = initial_estimate.atVector(W(1))
+V1 = initial_estimate.atVector(V(1))
+
 
 x0 = pp.mat2SE3(X0.matrix().astype(np.float64))
 x1 = pp.mat2SE3(X1.matrix().astype(np.float64))
 w0 = torch.tensor(W0.astype(np.float64))
 v0 = torch.tensor(V0.astype(np.float64))
+w1 = torch.tensor(W1.astype(np.float64))
+v1 = torch.tensor(V1.astype(np.float64))
 
 # Stand up dummy perturbation variables so we can autodiff easily.
 dx0 = torch.zeros(6, dtype=torch.float64)
@@ -99,3 +118,27 @@ def test_dynamics_jacobians():
     # Check that the jacobians are correct.
     for i in range(4):
         assert np.allclose(jac_list[i], pypose_jacs[i].numpy(), atol=1e-6)
+
+
+def test_constant_vel_outputs():
+    gtsam_error = vel_fac.error_func(initial_estimate)
+    torch_error = torch_constant_vel_error(v0, v1)
+
+    assert np.allclose(gtsam_error, torch_error.numpy(), atol=1e-6)
+
+
+def test_constant_vel_jacobians():
+    jac_list = [
+        np.zeros((3, 3), order="F"),
+        np.zeros((3, 3), order="F"),
+    ]
+
+    # Run factor forward to store jacobians in-place in jac_list.
+    vel_fac.error_func(initial_estimate, jac_list)
+
+    # Compute jacobians using autodiff.
+    torch_jacs = pp.func.jacrev(torch_constant_vel_error, argnums=(0, 1))(v0, v1)
+
+    # Check that the jacobians are correct.
+    for i in range(2):
+        assert np.allclose(jac_list[i], torch_jacs[i].numpy(), atol=1e-6)

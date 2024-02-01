@@ -3,7 +3,7 @@ import gtsam
 from typing import List, Optional
 
 
-class DynamicsFactor(gtsam.CustomFactor):
+class PoseDynamicsFactor(gtsam.CustomFactor):
     def __init__(
         self,
         noise_model: gtsam.noiseModel,
@@ -60,5 +60,29 @@ class DynamicsFactor(gtsam.CustomFactor):
             # Compute pose error.
             rel_pose = pred_pose.between(pose2)
             error = rel_pose.Logmap(rel_pose)
+
+        return error
+
+
+class ConstantVelocityFactor(gtsam.CustomFactor):
+    def __init__(
+        self,
+        noise_model: gtsam.noiseModel,
+        vel1: int,
+        vel2: int,
+    ):
+        super().__init__(noise_model, [vel1, vel2], self.error_func)
+
+    def error_func(
+        self, v: gtsam.Values, H: Optional[List[np.ndarray]] = None
+    ) -> np.ndarray:
+        vel1 = v.atVector(self.keys()[0])
+        vel2 = v.atVector(self.keys()[1])
+
+        if H:
+            H[0] = -np.eye(3)
+            H[1] = np.eye(3)
+
+        error = vel2 - vel1
 
         return error
