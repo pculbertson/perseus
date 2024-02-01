@@ -15,7 +15,7 @@ class AugmentationConfig:
     """Configuration for data augmentation."""
 
     # Color jiggle parameters.
-    brightness: float = 0.4
+    brightness: float = 0.2
     contrast: float = 0.4
     saturation: float = 0.4
     hue: float = 0.025
@@ -23,12 +23,14 @@ class AugmentationConfig:
     # Random affine parameters.
     degrees: float = 90
     translate: Tuple[float, float] = (0.1, 0.1)
-    scale: Tuple[float, float] = (0.8, 1.2)
+    scale: Tuple[float, float] = (0.9, 1.5)
     shear: float = 0.1
 
     # Flags for which augmentations to apply.
     color_jiggle: bool = True
     random_affine: bool = True
+    planckian_jitter: bool = True
+    random_erasing: bool = True
     blur: bool = True
 
 
@@ -76,21 +78,32 @@ class KeypointDataset(Dataset):
 
             print(f"Images shape: {self.images.shape}")
 
-    def __len__(self):
+    @property
+    def num_trajectories(self):
         return len(self.images)
 
+    @property
+    def images_per_trajectory(self):
+        return len(self.images[0])
+
+    def __len__(self):
+        return self.num_trajectories * self.images_per_trajectory
+
     def __getitem__(self, idx):
-        image = kornia.utils.image_to_tensor(self.images[idx]) / 255.0
-        pixel_coordinates = self.pixel_coordinates[idx].clone()
+        traj_idx = idx // self.images_per_trajectory
+        image_idx = idx % self.images_per_trajectory
+
+        image = kornia.utils.image_to_tensor(self.images[traj_idx][image_idx]) / 255.0
+        pixel_coordinates = self.pixel_coordinates[traj_idx][image_idx].clone()
 
         return {
             "image": image,
             "pixel_coordinates": pixel_coordinates,
-            "object_pose": self.object_poses[idx],
-            "camera_pose": self.camera_poses[idx],
-            "object_scale": self.object_scales[idx],
-            "camera_intrinsics": self.camera_intrinsics[idx],
-            "image_filename": self.image_filenames[idx],
+            "object_pose": self.object_poses[traj_idx][image_idx],
+            "camera_pose": self.camera_poses[traj_idx][image_idx],
+            "object_scale": self.object_scales[traj_idx][image_idx],
+            "camera_intrinsics": self.camera_intrinsics[traj_idx][image_idx],
+            "image_filename": self.image_filenames[traj_idx][image_idx],
         }
 
 
@@ -102,13 +115,19 @@ class KeypointAugmentation(torch.nn.Module):
 
         self.transforms = []
 
-        if cfg.color_jiggle:
+        if cfg.random_erasing:
             self.transforms.append(
-                kornia.augmentation.ColorJiggle(
-                    brightness=cfg.brightness,
-                    contrast=cfg.contrast,
-                    saturation=cfg.saturation,
-                    hue=cfg.hue,
+                kornia.augmentation.RandomErasing(
+                    p=0.5, scale=(0.02, 0.1), ratio=(2.0, 3.0), same_on_batch=False
+                )
+            )
+            self.transforms.append(
+                kornia.augmentation.RandomErasing(
+                    p=0.5,
+                    scale=(0.02, 0.05),
+                    ratio=(0.8, 1.2),
+                    same_on_batch=False,
+                    value=1,
                 )
             )
 
@@ -122,9 +141,40 @@ class KeypointAugmentation(torch.nn.Module):
                 )
             )
 
+        if cfg.random_erasing:
+            self.transforms.append(
+                kornia.augmentation.RandomErasing(
+                    p=0.5, scale=(0.02, 0.1), ratio=(2.0, 3.0), same_on_batch=False
+                )
+            )
+            self.transforms.append(
+                kornia.augmentation.RandomErasing(
+                    p=0.5,
+                    scale=(0.02, 0.05),
+                    ratio=(0.8, 1.2),
+                    same_on_batch=False,
+                    value=1,
+                )
+            )
+
+        if cfg.planckian_jitter:
+            self.transforms.append(
+                kornia.augmentation.RandomPlanckianJitter(mode="blackbody")
+            )
+
+        if cfg.color_jiggle:
+            self.transforms.append(
+                kornia.augmentation.ColorJiggle(
+                    brightness=cfg.brightness,
+                    contrast=cfg.contrast,
+                    saturation=cfg.saturation,
+                    hue=cfg.hue,
+                )
+            )
+
         if cfg.blur:
             self.transforms.append(
-                kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 10.0), p=0.5)
+                kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5)
             )
 
         self.transform_op = kornia.augmentation.AugmentationSequential(
@@ -151,7 +201,13 @@ if __name__ == "__main__":
     dataset = KeypointDataset(cfg.dataset_config)
     augment = KeypointAugmentation(cfg.augmentation_config, train=cfg.train)
 
-    pixel_coordinates, object_pose, image = dataset[cfg.debug_index]
+    example = dataset[cfg.debug_index]
+    image = example["image"]
+    raw_pixel_coordinates = example["pixel_coordinates"]
+    pixel_coordinates = raw_pixel_coordinates.clone()
+
+    print(pixel_coordinates.shape, image.shape)
+
     image, pixel_coordinates = augment(
         image.unsqueeze(0), pixel_coordinates.unsqueeze(0)
     )
@@ -169,7 +225,7 @@ if __name__ == "__main__":
     pixel_coordinates = pixel_coordinates.reshape(-1, 2)
 
     pixel_coordinates = kornia.geometry.conversions.denormalize_pixel_coordinates(
-        pixel_coordinates, dataset.W, dataset.H
+        pixel_coordinates, image.shape[-2], image.shape[-1]
     )
 
     plt.imshow(image.permute(1, 2, 0).numpy())

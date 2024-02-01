@@ -133,14 +133,16 @@ def train(cfg: TrainConfig):
     for epoch in range(cfg.n_epochs):
         # Train model.
         model.train()
-        for i, (pixel_coordinates, object_poses, images) in tqdm(
+        for i, example in tqdm(
             enumerate(train_dataloader),
             desc=f"Epoch {epoch}",
             total=len(train_dataloader),
         ):
+            images = example["image"]
+            pixel_coordinates = example["pixel_coordinates"]
+
             # Move to device.
             pixel_coordinates = pixel_coordinates.to(cfg.device)
-            object_poses = object_poses.to(cfg.device)
             images = images.to(cfg.device)
 
             # Augment data.
@@ -174,14 +176,17 @@ def train(cfg: TrainConfig):
             model.eval()
             with torch.no_grad():
                 val_loss = 0
-                for i, (pixel_coordinates, object_poses, images) in tqdm(
+                for i, example in tqdm(
                     enumerate(val_dataloader),
                     desc=f"Validation",
                     total=len(val_dataloader),
                 ):
+                    # Unpack example.
+                    images = example["image"]
+                    pixel_coordinates = example["pixel_coordinates"]
+
                     # Move to device.
                     pixel_coordinates = pixel_coordinates.to(cfg.device)
-                    object_poses = object_poses.to(cfg.device)
                     images = images.to(cfg.device)
 
                     # Augment data.

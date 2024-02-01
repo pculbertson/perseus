@@ -153,7 +153,7 @@ class FixedLagSmoother:
         else:
             # Shift measurements.
             self.measurements[:-1] = self.measurements[1:].clone()
-            self.measurements[-1] = new_measurement
+            self.measurements[-1] = new_measurement.clone()
 
             # # Update prior.
             self.prior_pose_mean = self.trajectory.poses[1].clone()
