@@ -1,6 +1,7 @@
 import numpy as np
 import gtsam
 from typing import List, Optional
+from functools import partial
 
 
 class PoseDynamicsFactor(gtsam.CustomFactor):
@@ -13,16 +14,26 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
         pose2: int,
         dt: float,
     ):
-        super().__init__(noise_model, [pose1, ang_vel1, vel1, pose2], self.error_func)
+        super().__init__(
+            noise_model,
+            [pose1, ang_vel1, vel1, pose2],
+            partial(PoseDynamicsFactor.error_func, dt=dt),
+        )
         self.dt = dt
 
     def error_func(
-        self, v: gtsam.Values, H: Optional[List[np.ndarray]] = None
+        this: gtsam.CustomFactor,
+        v: gtsam.Values,
+        H: Optional[List[np.ndarray]] = None,
+        dt: Optional[float] = None,
     ) -> np.ndarray:
-        pose1 = v.atPose3(self.keys()[0])
-        ang_vel1 = v.atVector(self.keys()[1])
-        vel1 = v.atVector(self.keys()[2])
-        pose2 = v.atPose3(self.keys()[3])
+        if dt is None:
+            raise ValueError("dt must be provided to error_func")
+
+        pose1 = v.atPose3(this.keys()[0])
+        ang_vel1 = v.atVector(this.keys()[1])
+        vel1 = v.atVector(this.keys()[2])
+        pose2 = v.atPose3(this.keys()[3])
 
         if H:
             # Allocate intermediate jacobians.
@@ -34,7 +45,7 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
 
             # Compute predicted pose.
             pose_increment = pose1.Expmap(
-                np.concatenate([self.dt * ang_vel1, self.dt * vel1]), perturbation_jac
+                np.concatenate([dt * ang_vel1, dt * vel1]), perturbation_jac
             )
             pred_pose = pose1.compose(pose_increment, dpred_dx0, dpred_dtwist)
 
@@ -46,7 +57,7 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
             dlog = rel_pose.LogmapDerivative(rel_pose)
             H[0] = dlog @ drel_dpred @ dpred_dx0
 
-            derr_dtwist = self.dt * dlog @ drel_dpred @ dpred_dtwist @ perturbation_jac
+            derr_dtwist = dt * dlog @ drel_dpred @ dpred_dtwist @ perturbation_jac
             H[1] = derr_dtwist[:, :3]
             H[2] = derr_dtwist[:, 3:]
 
@@ -54,7 +65,7 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
         else:
             # Compute predicted pose.
             pred_pose = pose1.compose(
-                pose1.Expmap(np.concatenate([self.dt * ang_vel1, self.dt * vel1]))
+                pose1.Expmap(np.concatenate([dt * ang_vel1, dt * vel1]))
             )
 
             # Compute pose error.
@@ -71,13 +82,13 @@ class ConstantVelocityFactor(gtsam.CustomFactor):
         vel1: int,
         vel2: int,
     ):
-        super().__init__(noise_model, [vel1, vel2], self.error_func)
+        super().__init__(noise_model, [vel1, vel2], ConstantVelocityFactor.error_func)
 
     def error_func(
-        self, v: gtsam.Values, H: Optional[List[np.ndarray]] = None
+        this: gtsam.CustomFactor, v: gtsam.Values, H: Optional[List[np.ndarray]] = None
     ) -> np.ndarray:
-        vel1 = v.atVector(self.keys()[0])
-        vel2 = v.atVector(self.keys()[1])
+        vel1 = v.atVector(this.keys()[0])
+        vel2 = v.atVector(this.keys()[1])
 
         if H:
             H[0] = -np.eye(3)

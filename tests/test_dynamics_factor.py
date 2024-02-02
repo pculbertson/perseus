@@ -30,6 +30,8 @@ initial_estimate.insert(W(1), rand_ang_vel2)
 # Pick a dt.
 dt = 1e-1
 
+# TODO(pculbert): refactor tests to match new factor API.
+
 # Create a pose dynamics factor to be tested.
 dyn_factor = PoseDynamicsFactor(
     gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-1, 1e-1, 1e-1, 1e-1, 1e-1, 1e-1])),
