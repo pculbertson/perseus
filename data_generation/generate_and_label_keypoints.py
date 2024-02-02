@@ -11,7 +11,6 @@ import h5py
 import numpy as np
 import copy
 from PIL import Image
-from tqdm import tqdm
 
 parser = ArgumentParser()
 parser.add_argument(
