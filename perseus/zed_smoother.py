@@ -149,7 +149,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
         # Load and scale keypoints.
-        MJC_CUBE_SCALE = 0.03  # 6cm cube on a side.
+        MJC_CUBE_SCALE = 0.035  # 7cm cube on a side.
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
         # Setup the smoother.
