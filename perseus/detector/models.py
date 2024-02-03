@@ -8,7 +8,7 @@ class KeypointCNN(nn.Module):
     def __init__(self, n_keypoints=8, num_channels=3, H=256, W=256):
         super(KeypointCNN, self).__init__()
         # Load a prebuilt ResNet (e.g., ResNet18) and modify it
-        self.resnet = models.resnet18(pretrained=True)
+        self.resnet = models.resnet18(weights="DEFAULT")
         self.n_keypoints = n_keypoints
         self.num_channels = num_channels
         self.H = H

@@ -2,7 +2,16 @@ import tyro
 from dataclasses import dataclass
 import torch
 from perseus.detector.models import KeypointCNN, KeypointGaussian
-from perseus.detector.data import KeypointDataset
+from perseus.detector.data import (
+    KeypointDataset,
+    KeypointDatasetConfig,
+    AugmentationConfig,
+    KeypointAugmentation,
+)
+import kornia
+import matplotlib
+
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import numpy as np
 from matplotlib.patches import Ellipse
@@ -10,8 +19,11 @@ from matplotlib.patches import Ellipse
 
 @dataclass(frozen=True)
 class ValConfig:
-    model_path: str = "outputs/models/7j7ecpwl.pth"
-    dataset_path: str = "data/2023-12-28_20-34-56/mjc_data.hdf5"
+    model_path: str = "outputs/models/fbz72ad3.pth"
+    dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(
+        dataset_path="data/2024-01-12_17-21-39/mjc_data.hdf5",
+    )
+    augmentation_config: AugmentationConfig = AugmentationConfig()
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     use_train: bool = False
     output_type: str = "regression"
@@ -28,23 +40,30 @@ def validate(cfg: ValConfig):
     model.eval()
 
     # Create dataloader.
-    val_dataset = KeypointDataset(cfg.dataset_path, train=cfg.use_train)
+    val_dataset = KeypointDataset(cfg.dataset_config, train=cfg.use_train)
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
         shuffle=False,
     )
+
+    val_augmentation = KeypointAugmentation(cfg.augmentation_config, train=False)
 
     model.to(cfg.device)
 
     # For every image in the validation set, plot the image and the predicted
     # keypoint locations.
     for ii, (pixel_coordinates, object_poses, image) in enumerate(val_dataloader):
+        print(ii)
         if ii % cfg.save_every == 0:
             plt.close("all")
             # Move to device.
             pixel_coordinates = pixel_coordinates.to(cfg.device).reshape(1, -1, 2)
             object_poses = object_poses.to(cfg.device)
             image = image.to(cfg.device)
+
+            # Apply augmentation.
+            image, pixel_coordinates = val_augmentation(image, pixel_coordinates)
+            pixel_coordinates = pixel_coordinates.reshape(1, -1, 2)
 
             # Forward pass.
             if cfg.output_type == "gaussian":
@@ -58,31 +77,54 @@ def validate(cfg: ValConfig):
             else:
                 predicted_pixel_coordinates = model(image).reshape(1, -1, 2).detach()
 
+            if cfg.output_type == "gaussian":
+                loss = (
+                    -torch.distributions.multivariate_normal.MultivariateNormal(
+                        mu, scale_tril=L
+                    )
+                    .log_prob(pixel_coordinates.reshape(1, -1))
+                    .mean()
+                )
+                print(f"flattened err: {mu-pixel_coordinates.reshape(1, -1)}")
+                print(f"reshaped err: {mu.reshape(1, -1, 2)-pixel_coordinates}")
+            else:
+                loss = torch.nn.SmoothL1Loss(beta=1.0)(
+                    pixel_coordinates, predicted_pixel_coordinates.reshape(1, -1, 2)
+                )
+
+            print(f"Loss: {loss.item()}")
+
+            pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
+                pixel_coordinates, val_dataset.H, val_dataset.W
+            ).cpu()
+
+            predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
+                predicted_pixel_coordinates, val_dataset.H, val_dataset.W
+            ).cpu()
+
+            print("Forward pass complete.")
+
             fig, ax = plt.subplots()
 
             # Plot.
-            ax.imshow(
-                image[0].permute(1, 2, 0).cpu().numpy().astype("uint8")[:, :, ::-1]
-            )
+            ax.imshow(image[0].permute(1, 2, 0).cpu().numpy())
+
+            print("Imshow complete.")
 
             # Plot ground truth keypoints with jet colormap.
             jet_colors = plt.cm.jet(np.linspace(0, 1, model.n_keypoints))
 
             for jj in range(model.n_keypoints):
                 ax.scatter(
-                    (val_dataset.H / 2) * (pixel_coordinates[0, jj, 0].cpu() + 1),
-                    (val_dataset.W / 2) * (pixel_coordinates[0, jj, 1].cpu() + 1),
+                    pixel_coordinates[0, jj, 0],
+                    pixel_coordinates[0, jj, 1],
                     c=jet_colors[jj],
                     alpha=0.8,
                     # use asterisk markers
                     marker="*",
                 )
-            pred_u = (val_dataset.H / 2) * (
-                predicted_pixel_coordinates[0, :, 0].cpu() + 1
-            ).detach().cpu().numpy()
-            pred_v = (val_dataset.W / 2) * (
-                predicted_pixel_coordinates[0, :, 1].cpu() + 1
-            ).detach().cpu().numpy()
+            pred_u = predicted_pixel_coordinates[0, :, 0].detach().cpu().numpy()
+            pred_v = predicted_pixel_coordinates[0, :, 1].detach().cpu().numpy()
 
             if cfg.output_type == "gaussian":
                 # Compute sizes of ellipses in pixel coordinates.
@@ -164,16 +206,12 @@ def validate(cfg: ValConfig):
                 else:
                     ax.plot(
                         [
-                            (val_dataset.H / 2)
-                            * (pixel_coordinates[0, jj, 0].cpu() + 1),
-                            (val_dataset.H / 2)
-                            * (predicted_pixel_coordinates[0, jj, 0].cpu() + 1),
+                            pixel_coordinates[0, jj, 0].cpu(),
+                            predicted_pixel_coordinates[0, jj, 0].cpu(),
                         ],
                         [
-                            (val_dataset.W / 2)
-                            * (pixel_coordinates[0, jj, 1].cpu() + 1),
-                            (val_dataset.W / 2)
-                            * (predicted_pixel_coordinates[0, jj, 1].cpu() + 1),
+                            pixel_coordinates[0, jj, 1].cpu(),
+                            predicted_pixel_coordinates[0, jj, 1].cpu(),
                         ],
                         c="k",
                         alpha=0.9,
@@ -185,22 +223,6 @@ def validate(cfg: ValConfig):
             )
 
             breakpoint()
-            if cfg.output_type == "gaussian":
-                loss = (
-                    -torch.distributions.multivariate_normal.MultivariateNormal(
-                        mu, scale_tril=L
-                    )
-                    .log_prob(pixel_coordinates.reshape(1, -1))
-                    .mean()
-                )
-                print(f"flattened err: {mu-pixel_coordinates.reshape(1, -1)}")
-                print(f"reshaped err: {mu.reshape(1, -1, 2)-pixel_coordinates}")
-            else:
-                loss = torch.nn.SmoothL1Loss(beta=0.25)(
-                    pixel_coordinates, predicted_pixel_coordinates.reshape(1, -1, 2)
-                )
-
-            print(f"Loss: {loss.item()}")
 
 
 if __name__ == "__main__":

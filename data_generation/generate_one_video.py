@@ -35,6 +35,7 @@ DYNAMIC_SPAWN_REGION = [(-5, -5, 1), (5, 5, 5)]
 MJC_SPAWN_REGION = [(-4.0, -4.0, 1.0), (4.0, 4.0, 0.0)]
 VELOCITY_RANGE = [(-4.0, -4.0, 0.0), (4.0, 4.0, 0.0)]
 MJC_VELOCITY_RANGE = [(-1.0, -1.0, -0.5), (1.0, 1.0, 1.0)]
+MJC_ANGULAR_VELOCITY_RANGE = [(-4.0, -4.0, -4.0), (4.0, 4.0, 4.0)]
 
 # --- CLI arguments
 parser = kb.ArgumentParser()
@@ -113,7 +114,7 @@ renderer.blender_scene.render.use_persistent_data = True
 logging.info("use_gpu: %s", renderer.use_gpu)
 logging.info("Blender device: %s", renderer.blender_scene.cycles.device)
 
-kubasic = LocalAssetSource.from_manifest(FLAGS.kubasic_assets)
+kubasic = LocalAssetfSource.from_manifest(FLAGS.kubasic_assets)
 gso = LocalAssetSource.from_manifest(FLAGS.gso_assets)
 hdri_source = LocalAssetSource.from_manifest(FLAGS.hdri_assets)
 
@@ -293,22 +294,34 @@ for obj in scene.foreground_assets:
 dome.friction = FLAGS.floor_friction
 dome.restitution = FLAGS.floor_restitution
 
-obj = kb.FileBasedObject(
+mjc = kb.FileBasedObject(
     asset_id="mjc",
     render_filename="data_generation/assets/mjc.glb",
     bounds=((-1, -1, -1), (1, 1, 1)),
     simulation_filename="data_generation/assets/mjc.urdf",
 )
-obj.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [obj.position[0], obj.position[1], 0]
-abs_scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
-obj.scale = abs_scale
-obj.metadata["scale"] = scale
-obj.metadata["abs_scale"] = abs_scale
-obj.metadata["is_dynamic"] = True
-obj.metadata["render_filename"] = obj.render_filename
-scene += obj
+mjc.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [mjc.position[0], mjc.position[1], 0]
+mjc.angular_velocity = rng.uniform(*MJC_ANGULAR_VELOCITY_RANGE)
+abs_scale = scale / np.max(mjc.bounds[1] - mjc.bounds[0])
+mjc.scale = abs_scale
+mjc.metadata["scale"] = scale
+mjc.metadata["abs_scale"] = abs_scale
+mjc.metadata["is_dynamic"] = True
+mjc.metadata["render_filename"] = mjc.render_filename
+scene += mjc
+
+# Randomize cube material properties.
+mjc_blender = mjc.linked_objects[renderer]
+roughness = rng.uniform(0.25, 1.0)
+coat_tint = rng.uniform(0.0, 1.0)
+for material in mjc_blender.data.materials:
+    for node in material.node_tree.nodes:
+        if node.type == "BSDF_PRINCIPLED":
+            node.inputs["Roughness"].default_value = roughness
+            print(node.inputs["Base Color"])
+
 kb.move_until_no_overlap(
-    obj, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng, max_trials=1000
+    mjc, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng, max_trials=1000
 )
 
 

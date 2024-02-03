@@ -8,9 +8,9 @@ import torch
 from tqdm import tqdm
 from data_generation.data_utils import to_SE3, get_pixel_coordinates, reorder_quaternion
 import h5py
-import cv2
 import numpy as np
 import copy
+from PIL import Image
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -117,6 +117,20 @@ def generate_data(args):
         keypoints, object_poses, camera_poses, fov, H, W
     )
 
+    # Get object scale.
+    object_scales = (
+        torch.as_tensor(object_dict["abs_scale"]).float().unsqueeze(0).expand(24)
+    )
+
+    # Compute camera intrinsics.
+    f_x = W / (2 * np.tan(fov / 2))
+    f_y = H / (2 * np.tan(fov / 2))
+    camera_intrinsics = torch.tensor(
+        [[f_x, 0, W / 2], [0, f_y, H / 2], [0, 0, 1]], dtype=torch.float32
+    )
+
+    camera_intrinsics = camera_intrinsics.unsqueeze(0).expand(24, -1, -1)
+
     # Load all rgb images in job dir.
     rgb_filenames = [
         os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png")
@@ -129,18 +143,19 @@ def generate_data(args):
     # Iterate over each RGB image filename
     for filename in rgb_filenames:
         # Read the image using OpenCV
-        image = cv2.imread(filename)
+        image = Image.open(filename).convert("RGB")
 
         # Append the image to the list
-        rgb_images.append(image)
-
-    # Convert the list of images to a numpy array
-    rgb_images_array = np.array(rgb_images)
+        rgb_images.append(np.array(image))
 
     return (
-        rgb_images_array,
+        rgb_images,
         pixel_coordinates.cpu().numpy(),
         object_poses.data.cpu().numpy(),
+        object_scales,
+        camera_poses,
+        camera_intrinsics,
+        rgb_filenames,
     )
 
 
@@ -219,25 +234,46 @@ def main(args):
     image_list = []
     pixel_coords_list = []
     obj_poses_list = []
+    obj_scales_list = []
+    camera_poses_list = []
+    camera_intrinsics_list = []
+    image_filename_list = []
 
-    for aa in args_list:
+    # Wrap for loop in tqdm
+    for aa in tqdm(args_list):
         try:
-            images, pixel_coords, obj_poses = generate_data(aa)
+            (
+                images,
+                pixel_coords,
+                obj_poses,
+                obj_scales,
+                camera_poses,
+                camera_intrinsics,
+                image_filenames,
+            ) = generate_data(aa)
         except Exception as e:
             print(f"Failed to generate data for job {aa.job_id}.")
             print(e)
             continue
-        image_list.append(images)
-        pixel_coords_list.append(pixel_coords)
-        obj_poses_list.append(obj_poses)
+        image_list.append(np.stack(images))
+        pixel_coords_list.append(np.stack(pixel_coords))
+        obj_poses_list.append(np.stack(obj_poses))
+        obj_scales_list.append(np.stack(obj_scales))
+        camera_poses_list.append(np.stack(camera_poses))
+        camera_intrinsics_list.append(np.stack(camera_intrinsics))
+        image_filename_list.append(np.stack(image_filenames))
 
     # Concatenate data and cast to torch.
-    image_list = np.concatenate(image_list, axis=0)
-    pixel_coords_list = np.concatenate(pixel_coords_list, axis=0)
-    obj_poses_list = np.concatenate(obj_poses_list, axis=0)
+    image_list = np.stack(image_list, axis=0)
+    pixel_coords_list = np.stack(pixel_coords_list, axis=0)
+    obj_poses_list = np.stack(obj_poses_list, axis=0)
+    obj_scales_list = np.stack(obj_scales_list, axis=0)
+    camera_poses_list = np.stack(camera_poses_list, axis=0)
+    camera_intrinsics_list = np.stack(camera_intrinsics_list, axis=0)
+    image_filename_list = np.stack(image_filename_list, axis=0).astype("S")
 
     # Save data as hdf5 file.
-    split_idx = int(len(image_list) * args.train_frac)
+    split_idx = int(image_list.shape[0] * args.train_frac)
 
     data_filename = os.path.join(args.job_dir, f"{args.asset_id}_data.hdf5")
     with h5py.File(data_filename, "w") as f:
@@ -251,6 +287,17 @@ def main(args):
         train.create_dataset(
             "object_poses", data=torch.from_numpy(obj_poses_list[:split_idx])
         )
+        train.create_dataset(
+            "object_scales", data=torch.from_numpy(obj_scales_list[:split_idx])
+        )
+        train.create_dataset(
+            "camera_poses", data=torch.from_numpy(camera_poses_list[:split_idx])
+        )
+        train.create_dataset(
+            "camera_intrinsics",
+            data=torch.from_numpy(camera_intrinsics_list[:split_idx]),
+        )
+        train.create_dataset("image_filenames", data=image_filename_list[:split_idx])
 
         # Store test data.
         test = f.create_group("test")
@@ -262,6 +309,17 @@ def main(args):
         test.create_dataset(
             "object_poses", data=torch.from_numpy(obj_poses_list[split_idx:])
         )
+        test.create_dataset(
+            "object_scales", data=torch.from_numpy(obj_scales_list[split_idx:])
+        )
+        test.create_dataset(
+            "camera_poses", data=torch.from_numpy(camera_poses_list[split_idx:])
+        )
+        test.create_dataset(
+            "camera_intrinsics",
+            data=torch.from_numpy(camera_intrinsics_list[split_idx:]),
+        )
+        test.create_dataset("image_filenames", data=image_filename_list[split_idx:])
 
         # Store hyperparameters.
         f.attrs["num_keypoints"] = args.num_keypoints

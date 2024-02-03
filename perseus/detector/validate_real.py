@@ -4,19 +4,31 @@ import tyro
 from dataclasses import dataclass
 import torch
 from perseus.detector.models import KeypointCNN, KeypointGaussian
-from perseus.detector.data import KeypointDataset
+from perseus.detector.data import (
+    KeypointDataset,
+    KeypointDatasetConfig,
+    AugmentationConfig,
+    KeypointAugmentation,
+)
+import matplotlib
+
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 import numpy as np
 from matplotlib.patches import Ellipse
 from pathlib import Path
-import cv2
+from PIL import Image
 from torchvision.transforms import Resize, CenterCrop
+import torchvision.transforms.functional as TF
+import kornia
 
 
 @dataclass(frozen=True)
 class ValConfig:
-    model_path: Path = Path("outputs/models/7j7ecpwl.pth")
-    dataset_path: Path = Path("data/zed1")
+    model_path: Path = Path("outputs/models/fbz72ad3.pth")
+    dataset_cfg: KeypointDatasetConfig = KeypointDatasetConfig(
+        dataset_path="data/zed1",
+    )
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     output_type: str = "regression"
     save_every: int = 1
@@ -34,7 +46,7 @@ def validate(cfg: ValConfig):
     model.to(cfg.device)
 
     # Load all images, sorted, from data dir.
-    image_files = sorted([f for f in cfg.dataset_path.glob("*.png")])
+    image_files = sorted([f for f in Path(cfg.dataset_cfg.dataset_path).glob("*.png")])
     image_files = [f for f in image_files if "segmentation" not in str(f)]
 
     print(image_files)
@@ -46,15 +58,16 @@ def validate(cfg: ValConfig):
             plt.close("all")
 
             # Load image.
-            image = cv2.imread(str(image_file))
-            image = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0)
+            image = Image.open(image_file).convert("RGB")
+            image = kornia.utils.image_to_tensor(np.array(image)) / 255.0
+            image = image.to(cfg.device).unsqueeze(0)
+
+            print(f"Read image: {image_file}")
 
             # Center crop to model image size.
             if image.shape[-2:] != (model.H, model.W):
-                image = Resize(model.H)(image)
-                image = CenterCrop((model.H, model.W))(image)
-
-            image = image.to(cfg.device)
+                image = kornia.geometry.transform.resize(image, int(1.8 * model.H))
+                image = kornia.geometry.transform.center_crop(image, (model.H, model.W))
 
             # Forward pass.
             if cfg.output_type == "gaussian":
@@ -68,22 +81,22 @@ def validate(cfg: ValConfig):
             else:
                 predicted_pixel_coordinates = model(image).reshape(1, -1, 2).detach()
 
+            predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
+                predicted_pixel_coordinates, model.H, model.W
+            ).cpu()
+
+            print("Forward pass complete.")
+
             fig, ax = plt.subplots(figsize=(4, 4))
 
             # Plot (flip image to BGR -> RGB).
-            ax.imshow(
-                image[0].permute(1, 2, 0).cpu().numpy().astype("uint8")[:, :, ::-1]
-            )
+            ax.imshow(image[0].permute(1, 2, 0).cpu().numpy())
 
             # Plot ground truth keypoints with jet colormap.
             jet_colors = plt.cm.jet(np.linspace(0, 1, model.n_keypoints))
 
-            pred_u = (model.H / 2) * (
-                predicted_pixel_coordinates[0, :, 0].cpu() + 1
-            ).detach().cpu().numpy()
-            pred_v = (model.W / 2) * (
-                predicted_pixel_coordinates[0, :, 1].cpu() + 1
-            ).detach().cpu().numpy()
+            pred_u = predicted_pixel_coordinates[0, :, 0].detach().cpu()
+            pred_v = predicted_pixel_coordinates[0, :, 1].detach().cpu()
 
             if cfg.output_type == "gaussian":
                 # Compute sizes of ellipses in pixel coordinates.
@@ -130,6 +143,8 @@ def validate(cfg: ValConfig):
                         alpha=0.8,
                     )
 
+            ax.set_title(f"Image {ii} / {len(image_files)}")
+
             # Save figure as png.
             plt.savefig(f"outputs/figures/val_{ii}.png")
 
@@ -146,7 +161,7 @@ def validate(cfg: ValConfig):
 
     images = [imageio.imread(imfile) for imfile in image_files]
     frames = np.stack([imageio.imread(imfile) for imfile in image_files], axis=0)
-    imageio.imwrite("outputs/figures/val.gif", frames, loop=0)
+    imageio.imwrite("outputs/figures/val.gif", frames, loop=0, fps=5)
 
 
 if __name__ == "__main__":
