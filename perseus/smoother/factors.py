@@ -7,11 +7,11 @@ from functools import partial
 class PoseDynamicsFactor(gtsam.CustomFactor):
     def __init__(
         self,
-        noise_model: gtsam.noiseModel,
         pose1: int,
         ang_vel1: int,
         vel1: int,
         pose2: int,
+        noise_model: gtsam.noiseModel,
         dt: float,
     ):
         super().__init__(
@@ -78,9 +78,9 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
 class ConstantVelocityFactor(gtsam.CustomFactor):
     def __init__(
         self,
-        noise_model: gtsam.noiseModel,
         vel1: int,
         vel2: int,
+        noise_model: gtsam.noiseModel,
     ):
         super().__init__(noise_model, [vel1, vel2], ConstantVelocityFactor.error_func)
 
@@ -95,5 +95,73 @@ class ConstantVelocityFactor(gtsam.CustomFactor):
             H[1] = np.eye(3)
 
         error = vel2 - vel1
+
+        return error
+
+
+class KeypointProjectionFactor(gtsam.CustomFactor):
+    def __init__(
+        self,
+        body_pose: int,
+        noise_model: gtsam.noiseModel,
+        camera_intrinsics: gtsam.Cal3_S2,
+        keypoint_measurement: np.ndarray,
+        point_body_frame: np.ndarray,
+    ):
+        super().__init__(
+            noise_model,
+            [body_pose],
+            partial(
+                KeypointProjectionFactor.error_func,
+                camera_intrinsics=camera_intrinsics,
+                keypoint_measurement=keypoint_measurement,
+                point_body_frame=point_body_frame,
+            ),
+        )
+
+    def error_func(
+        this: gtsam.CustomFactor,
+        v: gtsam.Values,
+        H: Optional[List[np.ndarray]] = None,
+        camera_intrinsics: Optional[gtsam.Cal3_S2] = None,
+        keypoint_measurement: Optional[np.ndarray] = None,
+        point_body_frame: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        body_pose = v.atPose3(this.keys()[0])
+
+        assert camera_intrinsics is not None
+        assert point_body_frame is not None
+        assert keypoint_measurement is not None
+
+        if H:
+            # Allocate intermediate jacobians.
+            dpc_dpose = np.zeros((3, 6), order="F")
+            dpc_dpoint = np.zeros((3, 3), order="F")
+            dproj_dpose = np.zeros((2, 6), order="F")
+            dproj_dcal = np.zeros((2, 5), order="F")
+            dproj_dpoint = np.zeros((2, 3), order="F")
+
+            point_camera_frame = body_pose.transformFrom(
+                point_body_frame, dpc_dpose, dpc_dpoint
+            )
+
+            # Create camera and project point down.
+            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            pixel = camera.project(
+                point_camera_frame, dproj_dpose, dproj_dpoint, dproj_dcal
+            )
+
+            # Implement chain rule.
+            H[0] = dproj_dpoint @ dpc_dpose
+            # H[0] = dpc_dpose
+
+            error = pixel - keypoint_measurement
+            # error = point_camera_frame
+
+        else:
+            point_camera_frame = body_pose.transformFrom(point_body_frame)
+            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            pixel = camera.project(point_camera_frame)
+            error = pixel - keypoint_measurement
 
         return error

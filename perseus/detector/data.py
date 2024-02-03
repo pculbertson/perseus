@@ -106,6 +106,20 @@ class KeypointDataset(Dataset):
             "image_filename": self.image_filenames[traj_idx][image_idx],
         }
 
+    def get_trajectory(self, idx):
+        images = kornia.utils.image_to_tensor(self.images[idx]) / 255.0
+        pixel_coordinates = self.pixel_coordinates[idx].clone()
+
+        return {
+            "images": images,
+            "pixel_coordinates": pixel_coordinates,
+            "object_poses": self.object_poses[idx],
+            "camera_poses": self.camera_poses[idx],
+            "object_scales": self.object_scales[idx],
+            "camera_intrinsics": self.camera_intrinsics[idx],
+            "image_filenames": self.image_filenames[idx],
+        }
+
 
 class KeypointAugmentation(torch.nn.Module):
     def __init__(self, cfg: AugmentationConfig, train=True):
