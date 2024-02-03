@@ -1,39 +1,53 @@
 import sys
-import cv2
-import pyzed.sl as sl
-from PyQt5 import QtWidgets, QtCore
-import pyqtgraph as pg
-import numpy as np
 import time
 
-import asyncio
-import qasync
+import pyzed.sl as sl
 
-from perseus.detector.models import KeypointCNN
 import torch
 import kornia
-import torchvision
+import numpy as np
 
-from perseus.smoother.base_v2 import (
-    FixedLagSmoother,
-    RigidBodyTrajectory,
-    SmootherConfig,
+from PyQt5 import QtWidgets, QtCore
+import pyqtgraph as pg
+import asyncio
+import qasync
+import cv2
+
+import gtsam
+from perseus.smoother.factors import (
+    PoseDynamicsFactor,
+    ConstantVelocityFactor,
+    KeypointProjectionFactor,
 )
-from perseus.smoother.utils import *
-from functools import partial
+from gtsam.symbol_shorthand import X, V, W
+import gtsam_unstable
+
+from perseus.detector.models import KeypointCNN
+from perseus.smoother.utils import UNIT_CUBE_KEYPOINTS
 
 
 class ZEDCamera:
+    """
+    A class for handling Zed camera I/O.
+    """
+
     def __init__(self):
-        # Initialize the ZED camera
+        """
+        Initializes the Zed camera. Currently hard-coded for 1080 resolution
+        and a particular serial number.
+        """
+        # TODO: Expose parameters for camera initialization.
+
+        # Create containers for camera/image.
         self.camera = sl.Camera()
-        self.image = sl.Mat()
+        self.image = (
+            sl.Mat()
+        )  # This needs to be stored or the image will be garbage collected.
+        self.runtime_parameters = sl.RuntimeParameters()
 
         # Set configuration parameters
         init_params = sl.InitParameters()
-        init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD720 video mode
-
-        # init_params.camera_fps = 30  # Set the camera to run at 30 FPS
+        init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
         init_params.set_from_serial_number(33143189)
 
         # Open the camera
@@ -42,17 +56,24 @@ class ZEDCamera:
             exit(1)
 
     async def get_frame_async(self):
+        """
+        An async wrapper around `get_frame` that allows for non-blocking
+        camera I/O.
+        """
         loop = asyncio.get_event_loop()
         frame = await loop.run_in_executor(None, self.get_frame)
         return frame
 
     def get_frame(self):
-        runtime_parameters = sl.RuntimeParameters()
-        if self.camera.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
+        """
+        Literally ChatGPT boilerplate for getting a frame from the Zed camera.
+        """
+        if self.camera.grab(self.runtime_parameters) == sl.ERROR_CODE.SUCCESS:
             self.camera.retrieve_image(self.image, sl.VIEW.LEFT)
             frame = self.image.get_data()
             return frame
-        return None
+
+        return None  # Return None if no frame is available.
 
     def close(self):
         # Close the ZED camera
@@ -60,50 +81,62 @@ class ZEDCamera:
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    """
+    A PyQT app for running the Zed camera and state estimator.
+    """
+
     def __init__(self, zed_camera, parent=None):
+        """
+        Intializes the app and constructs all needed objects.
+        """
+        # TODO: Expose config parameters (possibly all the way to command line).
         super(MainWindow, self).__init__(parent)
+
         self.zed_camera = zed_camera
 
-        # Fix the size of the window
+        # Fix the size of the window and create layout containers.
         self.setFixedSize(512, 512)
-
         self.graph_widget = pg.GraphicsLayoutWidget()
         self.view = self.graph_widget.addViewBox()
+        self.setCentralWidget(self.graph_widget)
 
         # Set some loop rates.
         self.viewer_freq = 30.0
-        self.camera_freq = 15.0
-        self.smoother_freq = 10.0
+        self.camera_freq = 30.0
+        self.smoother_freq = 30.0
 
-        # Image item
+        # Setup image item.
         self.image_item = pg.ImageItem(border="w")
         self.view.addItem(self.image_item)
         self.current_image = torch.zeros((3, 256, 256))
         self.current_keypoints = None
 
-        # Scatter plot item
+        # Setup scatter plot for estimated keypoints.
         self.scatter = pg.ScatterPlotItem(
             pen=pg.mkPen(None), brush=pg.mkBrush(255, 255, 255, 120)
         )
         self.view.addItem(self.scatter)
 
-        # Setup timer for GUI update.
+        # Setup QT timer for GUI update -- other loops handled via asyncio.
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(int(1000 / self.viewer_freq))
 
-        self.setCentralWidget(self.graph_widget)
-
+        # Load the detector and model weights.
         self.detector = KeypointCNN()
         self.detector.load_state_dict(torch.load("outputs/models/m84lw6vs.pth"))
         self.detector.eval()
-        # self.detector_compiled = torch.compile(self.detector)
-        self.detector_compiled = self.detector
 
+        # Set up the factor graph.
         self.init_smoother()
 
     def init_smoother(self):
-        self.dynamics = partial(zero_acc_euler_dynamics, dt=1 / self.smoother_freq)
+        """
+        Sets up all data needed for the smoother (priors, camera cal, etc.)
+        and intiializes the factor graph.
+        """
+
+        # Create camera calibration by reading from Zed.
         info = self.zed_camera.camera.get_camera_information()
         camera_calibration = info.camera_configuration.calibration_parameters.left_cam
         fx, fy, cx, cy = (
@@ -112,47 +145,100 @@ class MainWindow(QtWidgets.QMainWindow):
             camera_calibration.cx,
             camera_calibration.cy,
         )
+        s = 0.0
+        self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
+        # Load and scale keypoints.
         MJC_CUBE_SCALE = 0.03  # 6cm cube on a side.
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
-        keypoint_cfg = KeypointConfig(
-            camera_intrinsics=torch.tensor([[fx, 0, 128], [0, fy, 128], [0, 0, 1]]),
-            keypoints=self.object_frame_keypoints,
-        )
-        self.measurement = partial(keypoint_measurement, cfg=keypoint_cfg)
+        # Setup the smoother.
+        HORIZON = 5  # Number of frames to look back.
+        lag = HORIZON * 1 / self.smoother_freq  # Number of seconds to look back.
 
-        smoother_config = SmootherConfig(
-            horizon=15,
-            init_pose_mean=pp.SE3([0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0]),
-            # init_pose_covariance=torch.diag(
-            #     torch.tensor([1e-1, 1e-1, 1e-1, 1.0, 1.0, 1.0])
-            # ),
-            init_pose_covariance=5e-2 * torch.eye(6),
-            init_vel_covariance=1e-1 * torch.eye(6),
-            Q_vel=torch.eye(6),
+        # Create a GTSAM fixed-lag smoother.
+        self.smoother = gtsam_unstable.BatchFixedLagSmoother(lag)
+        self.new_factors = gtsam.NonlinearFactorGraph()
+        self.new_values = gtsam.Values()
+        self.new_timestamps = gtsam_unstable.FixedLagSmootherKeyTimestampMap()
+
+        # Create noise model for the keypoint projection factor.
+        self.keypoint_noise_model = gtsam.noiseModel.Diagonal.Sigmas(
+            5 * np.array([1e0, 1e0])
         )
 
-        self.smoother = FixedLagSmoother(
-            smoother_config,
-            self.dynamics,
-            self.measurement,
+        # Define prior parameters for the pose and velocity.
+        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.0, 0.0, 1.25]))
+        prior_pose_cov = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([1e0, 1e0, 1e0, 1e0, 1e0, 1e0])
         )
+        prior_vel_mean = np.array([0.0, 0.0, 0.0])
+        prior_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.25, 0.25, 0.25]))
+        prior_ang_vel_mean = np.array([0.0, 0.0, 0.0])
+        prior_ang_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1]))
+
+        # Create process noise models.
+        self.Q_pose = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2])
+        )
+        self.Q_vel = prior_vel_cov
+        self.Q_ang_vel = prior_ang_vel_cov
+
+        # Add the priors to the graph.
+        self.new_factors.push_back(
+            gtsam.PriorFactorPose3(X(0), prior_pose_mean, prior_pose_cov)
+        )
+        self.new_factors.push_back(
+            gtsam.PriorFactorVector(V(0), prior_vel_mean, prior_vel_cov)
+        )
+        self.new_factors.push_back(
+            gtsam.PriorFactorVector(W(0), prior_ang_vel_mean, prior_ang_vel_cov)
+        )
+
+        # Add the initial values to the graph.
+        self.new_values.insert(X(0), prior_pose_mean)
+        self.new_values.insert(V(0), prior_vel_mean)
+        self.new_values.insert(W(0), prior_ang_vel_mean)
+
+        # Init counters we'll use for the dt/iteration.
+        self.last_smoother_time = time.time()
+        self.smoother_iter = 0
+        self.last_image_time = None
+
+        # Initialize camera object we can use to project points into image frame.
+        self.gtsam_camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), self.calibration)
+
+        # Add the initial timestamp.
+        self.new_timestamps.insert((X(0), self.last_smoother_time))
+        self.new_timestamps.insert((V(0), self.last_smoother_time))
+        self.new_timestamps.insert((W(0), self.last_smoother_time))
+
+        # Update the graph and store results to get started.
+        self.smoother.update(self.new_factors, self.new_values, self.new_timestamps)
+        self.result = self.smoother.calculateEstimate()
+        self.new_timestamps.clear()
+        self.new_factors.resize(0)
+        self.new_values.clear()
 
     async def update_image(self):
+        """
+        Async function for reading the Zed camera and running inference.
+        """
         while True:
             try:
                 start = time.time()
-                frame = await self.zed_camera.get_frame_async()
+                frame = await self.zed_camera.get_frame_async()  # Read camera.
                 if frame is not None:
+                    # Store timing from frame.
+                    self.last_image_time = time.time()
+
                     # Convert frame to the format suitable for pyqtgraph
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                    # Run inference.
+                    # Run model inference to get est. keypoints.
                     with torch.no_grad():
                         image, keypoints = self.get_detector_keypoints(frame)
 
-                    # Update keypoints
                     self.current_keypoints = keypoints.clone()
                     self.current_image = image.clone()
                 else:
@@ -167,95 +253,173 @@ class MainWindow(QtWidgets.QMainWindow):
 
     async def update_smoother(self):
         while True:
-            start = time.time()
-            if self.current_keypoints is not None:
-                self.smoother.update(self.current_keypoints)
-                for _ in range(3):
-                    self.smoother.step()
-            end = time.time()
+            if self.last_image_time is None or self.current_keypoints is None:
+                # Skip if we don't have a new image yet.
+                pass
+            elif self.last_image_time > self.last_smoother_time:
+                # If we have a new image, update the smoother.
 
-            print(f"Smoother took {end - start} seconds to process.")
-            print(self.smoother.trajectory.poses)
+                start = time.time()
+                self.smoother_iter += 1
+
+                # Compute current dt.
+                dt = self.last_image_time - self.last_smoother_time
+
+                # Store the current time.
+                self.last_smoother_time = self.last_image_time
+
+                # Add new timestamps to the graph.
+                self.new_timestamps.insert(
+                    (X(self.smoother_iter), self.last_image_time)
+                )
+                self.new_timestamps.insert(
+                    (V(self.smoother_iter), self.last_image_time)
+                )
+                self.new_timestamps.insert(
+                    (W(self.smoother_iter), self.last_image_time)
+                )
+
+                # Create keypoint factors and add them to the graph.
+                for i, keypoint in enumerate(self.current_keypoints):
+                    keypoint_measurement = keypoint.numpy()
+                    point_body_frame = self.object_frame_keypoints[i].numpy()
+                    self.new_factors.push_back(
+                        KeypointProjectionFactor(
+                            X(self.smoother_iter),
+                            self.keypoint_noise_model,
+                            self.calibration,
+                            keypoint_measurement,
+                            point_body_frame,
+                        )
+                    )
+
+                # Add a pose dynamics factor to the graph.
+                self.new_factors.push_back(
+                    PoseDynamicsFactor(
+                        X(self.smoother_iter - 1),
+                        W(self.smoother_iter - 1),
+                        V(self.smoother_iter - 1),
+                        X(self.smoother_iter),
+                        self.Q_pose,
+                        dt,
+                    )
+                )
+
+                # Add constant velocity factor to the graph.
+                self.new_factors.push_back(
+                    ConstantVelocityFactor(
+                        V(self.smoother_iter - 1), V(self.smoother_iter), self.Q_vel
+                    )
+                )
+
+                # Add constant angular velocity factor to the graph.
+                self.new_factors.push_back(
+                    ConstantVelocityFactor(
+                        W(self.smoother_iter - 1),
+                        W(self.smoother_iter),
+                        self.Q_ang_vel,
+                    )
+                )
+
+                # Update initial values.
+                self.new_values.insert(
+                    X(self.smoother_iter),
+                    self.result.atPose3(X(self.smoother_iter - 1)),
+                )
+                self.new_values.insert(
+                    V(self.smoother_iter),
+                    self.result.atVector(V(self.smoother_iter - 1)),
+                )
+                self.new_values.insert(
+                    W(self.smoother_iter),
+                    self.result.atVector(W(self.smoother_iter - 1)),
+                )
+
+                # Update the graph and store results.
+                self.smoother.update(
+                    self.new_factors, self.new_values, self.new_timestamps
+                )
+                self.result = self.smoother.calculateEstimate()
+                self.new_timestamps.clear()
+                self.new_factors.resize(0)
+                self.new_values.clear()
+
+                print(f"Smoother update took {time.time() - start} seconds.")
 
             await asyncio.sleep(1 / self.smoother_freq)
 
     def update_frame(self):
+        """
+        Draws the current image and keypoints to the screen.
+        """
         start = time.time()
 
-        pixel_coordinates = (
-            self.measurement(self.smoother.trajectory.poses[-1:]).squeeze().clone()
+        # Transform body-frame keypoints to camera frame + project to pixel coordinates.
+        pixel_coordinates = np.array(
+            [
+                self.gtsam_camera.project(
+                    self.result.atPose3(X(self.smoother_iter)).transformFrom(kk)
+                )
+                for kk in self.object_frame_keypoints.numpy()
+            ]
         )
-        # pixel_coordinates = self.current_keypoints.clone()
+
+        # For viz: flip y-axis to match PyQT format.
         pixel_coordinates[:, 1] = self.detector.H - pixel_coordinates[:, 1]
         self.update_scatter(pixel_coordinates)
 
-        # View cropped image
+        # View cropped image -- also flip for PyQT.
         self.image_item.setImage(
             cv2.flip(
                 self.current_image.squeeze().permute(1, 2, 0).cpu().numpy(), 0
             ).transpose(1, 0, 2)
         )
 
-        # # Force image to display at true size.
-        # self.view.setRange(QtCore.QRectF(0, 0, self.detector.W, self.detector.H))
-
         end = time.time()
         print(f"Frame took {end - start} seconds to process.")
 
-        # print(
-        #     self.smoother.trajectory.poses[-1],
-        #     self.smoother.trajectory.velocities[-1],
-        # )
-
     def get_detector_keypoints(self, frame):
-        # Convert to tensor
+        """
+        Util to run the detector and convert the output to pixel coordinates.
+        """
+        # Convert image to tensor.
         image = kornia.utils.image_to_tensor(frame).unsqueeze(0) / 255.0
 
-        # Scale image to detector size
-        # image = kornia.geometry.transform.resize(image, self.detector.H)
+        # Center crop the hi-res image to the detector's input size.
         image = kornia.geometry.transform.center_crop(
             image, (self.detector.H, self.detector.W)
         )
 
-        # Forward pass.
+        # Pass image through CNN.
         net_start = time.time()
-        raw_pixel_coordinates = self.detector_compiled(image).reshape(-1, 2).detach()
+        raw_pixel_coordinates = self.detector(image).reshape(-1, 2).detach()
         net_end = time.time()
         print(f"Forward pass took {net_end - net_start} seconds.")
         predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
             raw_pixel_coordinates, self.detector.H, self.detector.W
         ).cpu()
 
-        # smaller_side = min(frame.shape[:2])
-        # predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
-        #     raw_pixel_coordinates, smaller_side, smaller_side
-        # ).cpu()
-
-        # Convert center crop back to original size
-        # width_diff = (frame.shape[1] - smaller_side) // 2
-        # height_diff = (frame.shape[0] - smaller_side) // 2
-        # predicted_pixel_coordinates[:, 0] += width_diff
-        # predicted_pixel_coordinates[:, 1] += height_diff
-
-        # predicted_pixel_coordinates[:, 1] = (
-        #     frame.shape[0] - predicted_pixel_coordinates[:, 1]
-        # )
-        # print(predicted_pixel_coordinates)
-
         return image, predicted_pixel_coordinates
 
-        # return np.array([[frame.shape[1] // 2, frame.shape[0] // 2]])
-
     async def run(self):
+        """
+        Sets up the async tasks and runs the main loop.
+        """
         self.camera_task = asyncio.create_task(self.update_image())
         self.smoother_task = asyncio.create_task(self.update_smoother())
         return self.camera_task, self.smoother_task
 
     def update_scatter(self, keypoints):
+        """
+        Util to update scatter plot with new keypoints.
+        """
         scatter_data = [{"pos": kp, "size": 10} for kp in keypoints]
         self.scatter.setData(scatter_data)
 
     def closeEvent(self, event):
+        """
+        Shutdown the Zed camera when the app is closed.
+        """
         self.zed_camera.close()
         super(MainWindow, self).closeEvent(event)
 
