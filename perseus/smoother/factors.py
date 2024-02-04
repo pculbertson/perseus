@@ -170,6 +170,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         camera_intrinsics: gtsam.Cal3_S2,
         keypoint_measurement: np.ndarray,
         point_body_frame: np.ndarray,
+        camera_pose: Optional[gtsam.Pose3] = gtsam.Pose3(),
     ):
         """
         Initializes the factor with the given keys, noise model, and problem data.
@@ -191,6 +192,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
                 camera_intrinsics=camera_intrinsics,
                 keypoint_measurement=keypoint_measurement,
                 point_body_frame=point_body_frame,
+                camera_pose=camera_pose,
             ),
         )
 
@@ -201,6 +203,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         camera_intrinsics: Optional[gtsam.Cal3_S2] = None,
         keypoint_measurement: Optional[np.ndarray] = None,
         point_body_frame: Optional[np.ndarray] = None,
+        camera_pose: Optional[gtsam.Pose3] = gtsam.Pose3(),
     ) -> np.ndarray:
         """
         Returns the difference between the keypoint measurement and the projection of the corresponding body-frame point into the camera frame, and optionally computes the Jacobians.
@@ -231,7 +234,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
             )
 
             # Create camera and project point onto image plane.
-            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            camera = gtsam.PinholeCameraCal3_S2(camera_pose, camera_intrinsics)
             pixel = camera.project(
                 point_camera_frame, dproj_dpose, dproj_dpoint, dproj_dcal
             )
@@ -243,7 +246,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         # Otherwise just run forward pass.
         else:
             point_camera_frame = body_pose.transformFrom(point_body_frame)
-            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            camera = gtsam.PinholeCameraCal3_S2(camera_pose, camera_intrinsics)
             pixel = camera.project(point_camera_frame)
             error = pixel - keypoint_measurement
 
