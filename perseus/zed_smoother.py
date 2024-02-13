@@ -47,8 +47,10 @@ class ZEDCamera:
 
         # Set configuration parameters
         init_params = sl.InitParameters()
-        init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
+        # init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
+        init_params.camera_resolution = sl.RESOLUTION.VGA
         init_params.set_from_serial_number(33143189)
+        # init_params.set_from_serial_number(32144978)
 
         # Open the camera
         err = self.camera.open(init_params)
@@ -69,7 +71,7 @@ class ZEDCamera:
         Literally ChatGPT boilerplate for getting a frame from the Zed camera.
         """
         if self.camera.grab(self.runtime_parameters) == sl.ERROR_CODE.SUCCESS:
-            self.camera.retrieve_image(self.image, sl.VIEW.LEFT)
+            self.camera.retrieve_image(self.image, sl.VIEW.RIGHT)
             frame = self.image.get_data()
             return frame
 
@@ -124,7 +126,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Load the detector and model weights.
         self.detector = KeypointCNN()
-        self.detector.load_state_dict(torch.load("outputs/models/m84lw6vs.pth"))
+        # self.detector.load_state_dict(torch.load("outputs/models/m84lw6vs.pth"))
+        self.detector.load_state_dict(torch.load("outputs/models/ibkvjlvb.pth"))
         self.detector.eval()
 
         # Set up the factor graph.
@@ -139,12 +142,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create camera calibration by reading from Zed.
         info = self.zed_camera.camera.get_camera_information()
         camera_calibration = info.camera_configuration.calibration_parameters.left_cam
-        fx, fy, cx, cy = (
+        fx, fy = (
             camera_calibration.fx,
             camera_calibration.fy,
-            camera_calibration.cx,
-            camera_calibration.cy,
         )
+        cx, cy = self.detector.W / 2, self.detector.H / 2
+
         s = 0.0
         self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
@@ -153,7 +156,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
         # Setup the smoother.
-        HORIZON = 5  # Number of frames to look back.
+        HORIZON = 10  # Number of frames to look back.
         lag = HORIZON * 1 / self.smoother_freq  # Number of seconds to look back.
 
         # Create a GTSAM fixed-lag smoother.
@@ -168,14 +171,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         # Define prior parameters for the pose and velocity.
-        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.0, 0.0, 1.25]))
+        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.0, 0.0, 0.15]))
         prior_pose_cov = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([1e0, 1e0, 1e0, 1e0, 1e0, 1e0])
         )
         prior_vel_mean = np.array([0.0, 0.0, 0.0])
         prior_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.25, 0.25, 0.25]))
         prior_ang_vel_mean = np.array([0.0, 0.0, 0.0])
-        prior_ang_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1]))
+        prior_ang_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.5, 0.5, 0.5]))
 
         # Create process noise models.
         self.Q_pose = gtsam.noiseModel.Diagonal.Sigmas(
@@ -245,7 +248,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     raise ValueError("frame is None")
 
                 end = time.time()
-                print(f"Camera took {end - start} seconds to process.")
+                # print(f"Camera took {end - start} seconds to process.")
 
                 await asyncio.sleep(1 / self.camera_freq)
             except Exception as e:
@@ -293,6 +296,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         )
                     )
 
+                # Print where the Keypoint factor would project [0, 0, 1] to in pixel coords.
+                camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), self.calibration)
+                print(camera.project(np.array([1., 0., 0.01])))
+
                 # Add a pose dynamics factor to the graph.
                 self.new_factors.push_back(
                     PoseDynamicsFactor(
@@ -321,10 +328,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
                 )
 
+                pred_vel = np.concatenate([self.result.atVector(V(self.smoother_iter - 1)),
+                    self.result.atVector(W(self.smoother_iter -1 ))])
+
                 # Update initial values.
                 self.new_values.insert(
                     X(self.smoother_iter),
-                    self.result.atPose3(X(self.smoother_iter - 1)),
+                    self.result.atPose3(X(self.smoother_iter - 1)).expmap((1 / self.smoother_freq) * pred_vel),
                 )
                 self.new_values.insert(
                     V(self.smoother_iter),
@@ -336,15 +346,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
 
                 # Update the graph and store results.
-                self.smoother.update(
-                    self.new_factors, self.new_values, self.new_timestamps
-                )
+                try: 
+                    self.smoother.update(self.new_factors, self.new_values, self.new_timestamps)
+                except RuntimeError as e:
+                    if e.args[0] == "CheiralityException":
+                        self.init_smoother()
+                    else:
+                        raise e
                 self.result = self.smoother.calculateEstimate()
                 self.new_timestamps.clear()
                 self.new_factors.resize(0)
                 self.new_values.clear()
 
-                print(f"Smoother update took {time.time() - start} seconds.")
+                print(self.result.atPose3(X(self.smoother_iter)))
+
+                # print(f"Smoother update took {time.time() - start} seconds.")
 
             await asyncio.sleep(1 / self.smoother_freq)
 
@@ -366,6 +382,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # For viz: flip y-axis to match PyQT format.
         pixel_coordinates[:, 1] = self.detector.H - pixel_coordinates[:, 1]
+
         self.update_scatter(pixel_coordinates)
 
         # View cropped image -- also flip for PyQT.
@@ -376,7 +393,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         end = time.time()
-        print(f"Frame took {end - start} seconds to process.")
+        # print(f"Frame took {end - start} seconds to process.")
+
+        
 
     def get_detector_keypoints(self, frame):
         """
@@ -394,7 +413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         net_start = time.time()
         raw_pixel_coordinates = self.detector(image).reshape(-1, 2).detach()
         net_end = time.time()
-        print(f"Forward pass took {net_end - net_start} seconds.")
+        # print(f"Forward pass took {net_end - net_start} seconds.")
         predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
             raw_pixel_coordinates, self.detector.H, self.detector.W
         ).cpu()
