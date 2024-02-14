@@ -47,12 +47,14 @@ class ZEDCamera:
 
         # Set configuration parameters
         init_params = sl.InitParameters()
-        init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
-        init_params.set_from_serial_number(33143189)
+        init_params.camera_image_flip = sl.FLIP_MODE.OFF  # don't automatically flip the camera based on orientation
+        init_params.camera_resolution = sl.RESOLUTION.VGA  # Use VGA video mode
+        init_params.set_from_serial_number(33143189)  # 32144978, 33143189
 
         # Open the camera
         err = self.camera.open(init_params)
         if err != sl.ERROR_CODE.SUCCESS:
+            print("Didn't open!")
             exit(1)
 
     async def get_frame_async(self):
@@ -124,7 +126,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Load the detector and model weights.
         self.detector = KeypointCNN()
-        self.detector.load_state_dict(torch.load("outputs/models/m84lw6vs.pth"))
+        self.detector.load_state_dict(torch.load("../outputs/models/ibkvjlvb.pth"))
         self.detector.eval()
 
         # Set up the factor graph.
@@ -139,12 +141,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create camera calibration by reading from Zed.
         info = self.zed_camera.camera.get_camera_information()
         camera_calibration = info.camera_configuration.calibration_parameters.left_cam
-        fx, fy, cx, cy = (
+        fx, fy = (
             camera_calibration.fx,
             camera_calibration.fy,
-            camera_calibration.cx,
-            camera_calibration.cy,
         )
+        cx, cy = self.detector.W / 2, self.detector.H / 2
         s = 0.0
         self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
@@ -168,7 +169,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         # Define prior parameters for the pose and velocity.
-        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.0, 0.0, 1.25]))
+        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.1, 0.0, 0.0]))
         prior_pose_cov = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([1e0, 1e0, 1e0, 1e0, 1e0, 1e0])
         )
@@ -245,7 +246,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     raise ValueError("frame is None")
 
                 end = time.time()
-                print(f"Camera took {end - start} seconds to process.")
+                # print(f"Camera took {end - start} seconds to process.")
 
                 await asyncio.sleep(1 / self.camera_freq)
             except Exception as e:
@@ -336,15 +337,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
 
                 # Update the graph and store results.
-                self.smoother.update(
-                    self.new_factors, self.new_values, self.new_timestamps
-                )
+                try:
+                    self.smoother.update(self.new_factors, self.new_values, self.new_timestamps)
+                except RuntimeError as e:
+                    if e.args[0] == "CheiralityException":
+                        self.init_smoother()
+                    else:
+                        raise e
                 self.result = self.smoother.calculateEstimate()
                 self.new_timestamps.clear()
                 self.new_factors.resize(0)
                 self.new_values.clear()
 
-                print(f"Smoother update took {time.time() - start} seconds.")
+                # print(f"Smoother update took {time.time() - start} seconds.")
 
             await asyncio.sleep(1 / self.smoother_freq)
 
@@ -376,7 +381,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         end = time.time()
-        print(f"Frame took {end - start} seconds to process.")
+        # print(f"Frame took {end - start} seconds to process.")
 
     def get_detector_keypoints(self, frame):
         """
@@ -394,7 +399,7 @@ class MainWindow(QtWidgets.QMainWindow):
         net_start = time.time()
         raw_pixel_coordinates = self.detector(image).reshape(-1, 2).detach()
         net_end = time.time()
-        print(f"Forward pass took {net_end - net_start} seconds.")
+        # print(f"Forward pass took {net_end - net_start} seconds.")
         predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
             raw_pixel_coordinates, self.detector.H, self.detector.W
         ).cpu()
@@ -413,8 +418,12 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         Util to update scatter plot with new keypoints.
         """
+        brushes = [
+            pg.mkBrush(255, 255, 255, 120) if i != 7 else pg.mkBrush(255, 0, 0, 120) for i in range(8)
+        ]
         scatter_data = [{"pos": kp, "size": 10} for kp in keypoints]
         self.scatter.setData(scatter_data)
+        self.scatter.setBrush(brushes)
 
     def closeEvent(self, event):
         """
