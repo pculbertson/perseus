@@ -26,6 +26,19 @@ from perseus.detector.models import KeypointCNN
 from perseus.smoother.utils import UNIT_CUBE_KEYPOINTS
 
 
+# HARDCODED PARAMETERS THAT MATTER
+####################################################################
+MJC_CUBE_SCALE = 0.035  # cube half-side-length. 7cm cube on a side.
+
+# CAM A
+SERIAL_NUMBER = 33143189  # cam A: 33143189, cam B: 32144978
+VIEW = sl.VIEW.LEFT  # for cam A, left. for cam B, right.
+
+# CAM B
+# SERIAL_NUMBER = 32144978  # cam A: 33143189, cam B: 32144978
+# VIEW = sl.VIEW.RIGHT  # for cam A, left. for cam B, right.
+####################################################################
+
 class ZEDCamera:
     """
     A class for handling Zed camera I/O.
@@ -47,14 +60,14 @@ class ZEDCamera:
 
         # Set configuration parameters
         init_params = sl.InitParameters()
-        # init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
-        init_params.camera_resolution = sl.RESOLUTION.VGA
-        init_params.set_from_serial_number(33143189)
-        # init_params.set_from_serial_number(32144978)
+        init_params.camera_image_flip = sl.FLIP_MODE.OFF  # don't automatically flip the camera based on orientation
+        init_params.camera_resolution = sl.RESOLUTION.VGA  # Use VGA video mode
+        init_params.set_from_serial_number(SERIAL_NUMBER)
 
         # Open the camera
         err = self.camera.open(init_params)
         if err != sl.ERROR_CODE.SUCCESS:
+            print("Didn't open!")
             exit(1)
 
     async def get_frame_async(self):
@@ -71,7 +84,7 @@ class ZEDCamera:
         Literally ChatGPT boilerplate for getting a frame from the Zed camera.
         """
         if self.camera.grab(self.runtime_parameters) == sl.ERROR_CODE.SUCCESS:
-            self.camera.retrieve_image(self.image, sl.VIEW.RIGHT)
+            self.camera.retrieve_image(self.image, VIEW)
             frame = self.image.get_data()
             return frame
 
@@ -126,8 +139,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Load the detector and model weights.
         self.detector = KeypointCNN()
-        # self.detector.load_state_dict(torch.load("outputs/models/m84lw6vs.pth"))
-        self.detector.load_state_dict(torch.load("outputs/models/ibkvjlvb.pth"))
+        self.detector.load_state_dict(torch.load("../outputs/models/ibkvjlvb.pth"))
         self.detector.eval()
 
         # Set up the factor graph.
@@ -147,12 +159,10 @@ class MainWindow(QtWidgets.QMainWindow):
             camera_calibration.fy,
         )
         cx, cy = self.detector.W / 2, self.detector.H / 2
-
         s = 0.0
         self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
         # Load and scale keypoints.
-        MJC_CUBE_SCALE = 0.035  # 7cm cube on a side.
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
         # Setup the smoother.
@@ -298,7 +308,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # Print where the Keypoint factor would project [0, 0, 1] to in pixel coords.
                 camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), self.calibration)
-                print(camera.project(np.array([1., 0., 0.01])))
 
                 # Add a pose dynamics factor to the graph.
                 self.new_factors.push_back(
@@ -346,7 +355,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
 
                 # Update the graph and store results.
-                try: 
+                try:
                     self.smoother.update(self.new_factors, self.new_values, self.new_timestamps)
                 except RuntimeError as e:
                     if e.args[0] == "CheiralityException":
@@ -357,9 +366,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.new_timestamps.clear()
                 self.new_factors.resize(0)
                 self.new_values.clear()
-
-                print(self.result.atPose3(X(self.smoother_iter)))
-
                 # print(f"Smoother update took {time.time() - start} seconds.")
 
             await asyncio.sleep(1 / self.smoother_freq)
@@ -394,8 +400,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         end = time.time()
         # print(f"Frame took {end - start} seconds to process.")
-
-        
 
     def get_detector_keypoints(self, frame):
         """
@@ -432,8 +436,12 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         Util to update scatter plot with new keypoints.
         """
+        brushes = [
+            pg.mkBrush(255, 255, 255, 120) if i != 7 else pg.mkBrush(255, 0, 0, 120) for i in range(8)
+        ]
         scatter_data = [{"pos": kp, "size": 10} for kp in keypoints]
         self.scatter.setData(scatter_data)
+        self.scatter.setBrush(brushes)
 
     def closeEvent(self, event):
         """
