@@ -26,6 +26,19 @@ from perseus.detector.models import KeypointCNN
 from perseus.smoother.utils import UNIT_CUBE_KEYPOINTS
 
 
+# HARDCODED PARAMETERS THAT MATTER
+####################################################################
+MJC_CUBE_SCALE = 0.035  # cube half-side-length. 7cm cube on a side.
+
+# CAM A
+SERIAL_NUMBER = 33143189  # cam A: 33143189, cam B: 32144978
+VIEW = sl.VIEW.LEFT  # for cam A, left. for cam B, right.
+
+# CAM B
+# SERIAL_NUMBER = 32144978  # cam A: 33143189, cam B: 32144978
+# VIEW = sl.VIEW.RIGHT  # for cam A, left. for cam B, right.
+####################################################################
+
 class ZEDCamera:
     """
     A class for handling Zed camera I/O.
@@ -49,7 +62,7 @@ class ZEDCamera:
         init_params = sl.InitParameters()
         init_params.camera_image_flip = sl.FLIP_MODE.OFF  # don't automatically flip the camera based on orientation
         init_params.camera_resolution = sl.RESOLUTION.VGA  # Use VGA video mode
-        init_params.set_from_serial_number(33143189)  # 32144978, 33143189
+        init_params.set_from_serial_number(SERIAL_NUMBER)
 
         # Open the camera
         err = self.camera.open(init_params)
@@ -71,7 +84,7 @@ class ZEDCamera:
         Literally ChatGPT boilerplate for getting a frame from the Zed camera.
         """
         if self.camera.grab(self.runtime_parameters) == sl.ERROR_CODE.SUCCESS:
-            self.camera.retrieve_image(self.image, sl.VIEW.RIGHT)
+            self.camera.retrieve_image(self.image, VIEW)
             frame = self.image.get_data()
             return frame
 
@@ -150,7 +163,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.calibration = gtsam.Cal3_S2(fx, fy, s, cx, cy)
 
         # Load and scale keypoints.
-        MJC_CUBE_SCALE = 0.035  # 7cm cube on a side.
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
         # Setup the smoother.
@@ -169,7 +181,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         # Define prior parameters for the pose and velocity.
-        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.1, 0.0, 0.0]))
+        prior_pose_mean = gtsam.Pose3(gtsam.Rot3(), np.array([0.0, 0.0, 0.15]))
         prior_pose_cov = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([1e0, 1e0, 1e0, 1e0, 1e0, 1e0])
         )
@@ -296,7 +308,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 # Print where the Keypoint factor would project [0, 0, 1] to in pixel coords.
                 camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), self.calibration)
-                print(camera.project(np.array([1., 0., 0.01])))
 
                 # Add a pose dynamics factor to the graph.
                 self.new_factors.push_back(
