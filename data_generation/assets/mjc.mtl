@@ -1,7 +1,7 @@
 # Blender MTL File: 'mjc.blend'
 # Material Count: 6
 
-newmtl Material.001
+newmtl Material
 Ns 225.000000
 Ka 1.000000 1.000000 1.000000
 Kd 0.800000 0.800000 0.800000
@@ -10,17 +10,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-
-newmtl back
-Ns 225.000000
-Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
-Ks 0.500000 0.500000 0.500000
-Ke 0.000000 0.000000 0.000000
-Ni 1.450000
-d 1.000000
-illum 2
-map_Kd cube_textures/fileback.png
+map_Kd cube_textures_updated/fileback.png
 
 newmtl down
 Ns 225.000000
@@ -31,7 +21,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Kd cube_textures/filedown.png
+map_Kd cube_textures_updated/filedown.png
 
 newmtl front
 Ns 225.000000
@@ -42,7 +32,18 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Kd cube_textures/filefront.png
+map_Kd cube_textures_updated/filefront.png
+
+newmtl left
+Ns 225.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd cube_textures_updated/fileleft.png
 
 newmtl right
 Ns 323.999994
@@ -53,7 +54,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Kd cube_textures/fileright.png
+map_Kd cube_textures_updated/fileright.png
 
 newmtl up
 Ns 225.000000
@@ -64,4 +65,4 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 2
-map_Kd cube_textures/fileup.png
+map_Kd cube_textures_updated/fileup.png

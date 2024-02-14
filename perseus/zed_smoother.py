@@ -71,7 +71,7 @@ class ZEDCamera:
         Literally ChatGPT boilerplate for getting a frame from the Zed camera.
         """
         if self.camera.grab(self.runtime_parameters) == sl.ERROR_CODE.SUCCESS:
-            self.camera.retrieve_image(self.image, sl.VIEW.LEFT)
+            self.camera.retrieve_image(self.image, sl.VIEW.RIGHT)
             frame = self.image.get_data()
             return frame
 
@@ -154,7 +154,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.object_frame_keypoints = torch.tensor(UNIT_CUBE_KEYPOINTS) * MJC_CUBE_SCALE
 
         # Setup the smoother.
-        HORIZON = 5  # Number of frames to look back.
+        HORIZON = 10  # Number of frames to look back.
         lag = HORIZON * 1 / self.smoother_freq  # Number of seconds to look back.
 
         # Create a GTSAM fixed-lag smoother.
@@ -176,7 +176,7 @@ class MainWindow(QtWidgets.QMainWindow):
         prior_vel_mean = np.array([0.0, 0.0, 0.0])
         prior_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.25, 0.25, 0.25]))
         prior_ang_vel_mean = np.array([0.0, 0.0, 0.0])
-        prior_ang_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1, 0.1, 0.1]))
+        prior_ang_vel_cov = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.5, 0.5, 0.5]))
 
         # Create process noise models.
         self.Q_pose = gtsam.noiseModel.Diagonal.Sigmas(
@@ -294,6 +294,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         )
                     )
 
+                # Print where the Keypoint factor would project [0, 0, 1] to in pixel coords.
+                camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), self.calibration)
+                print(camera.project(np.array([1., 0., 0.01])))
+
                 # Add a pose dynamics factor to the graph.
                 self.new_factors.push_back(
                     PoseDynamicsFactor(
@@ -322,10 +326,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     )
                 )
 
+                pred_vel = np.concatenate([self.result.atVector(V(self.smoother_iter - 1)),
+                    self.result.atVector(W(self.smoother_iter -1 ))])
+
                 # Update initial values.
                 self.new_values.insert(
                     X(self.smoother_iter),
-                    self.result.atPose3(X(self.smoother_iter - 1)),
+                    self.result.atPose3(X(self.smoother_iter - 1)).expmap((1 / self.smoother_freq) * pred_vel),
                 )
                 self.new_values.insert(
                     V(self.smoother_iter),
@@ -348,7 +355,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.new_timestamps.clear()
                 self.new_factors.resize(0)
                 self.new_values.clear()
-
                 # print(f"Smoother update took {time.time() - start} seconds.")
 
             await asyncio.sleep(1 / self.smoother_freq)
@@ -371,6 +377,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # For viz: flip y-axis to match PyQT format.
         pixel_coordinates[:, 1] = self.detector.H - pixel_coordinates[:, 1]
+
         self.update_scatter(pixel_coordinates)
 
         # View cropped image -- also flip for PyQT.

@@ -29,7 +29,7 @@ class TrainConfig:
     learning_rate: float = 1e-3
     n_epochs: int = 100
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    num_workers: int = 16
+    num_workers: int = -1
 
     output_type: str = "regression"
 
