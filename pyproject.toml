@@ -30,4 +30,4 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-include = ["obelisk_py*"]
+include = ["perseus*"]
