@@ -18,6 +18,7 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
         pose2: int,
         noise_model: gtsam.noiseModel,
         dt: float,
+        vel_frame: str = "world",
     ):
         """
         Creates a new PoseDynamicsFactor instance. GTSAM has a very
@@ -32,27 +33,31 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
 
         Args:
             pose1: The key for the first pose.
-            ang_vel1: The key for the angular velocity.
-            vel1: The key for the linear velocity.
+            ang_vel1: The key for the angular velocity (in the body frame).
+            vel1: The key for the linear velocity (in the world frame).
             pose2: The key for the second pose.
             noise_model: The noise model for the factor.
             dt: The time step for the dynamics.
         """
+        assert vel_frame in ["world", "body"], "vel_frame must be 'world' or 'body'."
+
         # Create a closure of the error function that captures `dt`.
         # We pass the error_func as a class method because the GTSAM
         # optimizers will pass the factor as the `this` argument automatically.
         super().__init__(
             noise_model,
             [pose1, ang_vel1, vel1, pose2],
-            partial(PoseDynamicsFactor.error_func, dt=dt),
+            partial(PoseDynamicsFactor.error_func, dt=dt, vel_frame=vel_frame),
         )
         self.dt = dt
+        self.vel_frame = vel_frame
 
     def error_func(
         this: gtsam.CustomFactor,
         v: gtsam.Values,
         H: Optional[List[np.ndarray]] = None,
         dt: Optional[float] = None,
+        vel_frame: Optional[str] = None,
     ) -> np.ndarray:
         """
         Takes a factor instance and set of values, and computes the residual between an Euler approximation of the dynamics and the next pose. Optionally takes a list of Jacobians that it overwrites in place. We use a hack to allow
@@ -83,6 +88,15 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
             drel_dpred = np.zeros((6, 6), order="F")
             drel_dpose2 = np.zeros((6, 6), order="F")
 
+            if vel_frame == "world":
+                # First transform the linear velocity into the body frame.
+                dvb_dpose = np.zeros((3, 6), order="F")
+                dvb_dvel = np.zeros((3, 3), order="F")
+
+                # A dirty hack: create a trivial rotation transform that can be used to rotate the linear velocity into the body frame.
+                world_to_body = gtsam.Pose3(pose1.rotation(), np.zeros(3))
+                vel1 = world_to_body.transformTo(vel1, dvb_dpose, dvb_dvel)
+
             # Compute predicted pose via the exponential map of the velocities.
             pose_increment = pose1.Expmap(
                 np.concatenate([dt * ang_vel1, dt * vel1]), perturbation_jac
@@ -95,23 +109,36 @@ class PoseDynamicsFactor(gtsam.CustomFactor):
 
             # Implement chain rule
             dlog = rel_pose.LogmapDerivative(rel_pose)
+
             H[0] = dlog @ drel_dpred @ dpred_dx0  # derr_dpose1
 
             # Compute Jacobians for twist, and slice into angular and linear components.
             derr_dtwist = dt * dlog @ drel_dpred @ dpred_dtwist @ perturbation_jac
-            H[1] = derr_dtwist[:, :3]  # derr_dang_vel1
-            H[2] = derr_dtwist[:, 3:]  # derr_dvel1
+            H[1] = derr_dtwist[:, :3]  # derr_dang_vel
+
+            if vel_frame == "world":
+                # Compute Jacobian for linear velocity in the world frame.
+                H[0][:, :3] += derr_dtwist[:, 3:] @ dvb_dpose[:, :3]  # derr_dpose1
+
+                # Compute Jacobian for linear velocity in the world frame
+                H[2] = derr_dtwist[:, 3:] @ dvb_dvel  # derr_dvel1
+
+            else:
+                H[2] = derr_dtwist[:, 3:]  # derr_dvel1
 
             H[3] = dlog @ drel_dpose2  # derr_dpose2
         else:
             # Perform forward pass without Jacobian computation for speed.
-            pred_pose = pose1.compose(
-                pose1.Expmap(np.concatenate([dt * ang_vel1, dt * vel1]))
+            if vel_frame == "world":
+                vel1 = pose1.rotation().unrotate(vel1)
+
+            pred_pose = pose1 * gtsam.Pose3().Expmap(
+                np.concatenate([dt * ang_vel1, dt * vel1])
             )
 
             # Compute pose error.
             rel_pose = pred_pose.between(pose2)
-            error = rel_pose.Logmap(rel_pose)
+            error = gtsam.Pose3.Logmap(rel_pose)
 
         return error
 
@@ -170,6 +197,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         camera_intrinsics: gtsam.Cal3_S2,
         keypoint_measurement: np.ndarray,
         point_body_frame: np.ndarray,
+        camera_pose: Optional[gtsam.Pose3] = gtsam.Pose3(),
     ):
         """
         Initializes the factor with the given keys, noise model, and problem data.
@@ -191,6 +219,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
                 camera_intrinsics=camera_intrinsics,
                 keypoint_measurement=keypoint_measurement,
                 point_body_frame=point_body_frame,
+                camera_pose=camera_pose,
             ),
         )
 
@@ -201,6 +230,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         camera_intrinsics: Optional[gtsam.Cal3_S2] = None,
         keypoint_measurement: Optional[np.ndarray] = None,
         point_body_frame: Optional[np.ndarray] = None,
+        camera_pose: Optional[gtsam.Pose3] = gtsam.Pose3(),
     ) -> np.ndarray:
         """
         Returns the difference between the keypoint measurement and the projection of the corresponding body-frame point into the camera frame, and optionally computes the Jacobians.
@@ -231,7 +261,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
             )
 
             # Create camera and project point onto image plane.
-            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            camera = gtsam.PinholeCameraCal3_S2(camera_pose, camera_intrinsics)
             pixel = camera.project(
                 point_camera_frame, dproj_dpose, dproj_dpoint, dproj_dcal
             )
@@ -243,7 +273,7 @@ class KeypointProjectionFactor(gtsam.CustomFactor):
         # Otherwise just run forward pass.
         else:
             point_camera_frame = body_pose.transformFrom(point_body_frame)
-            camera = gtsam.PinholeCameraCal3_S2(gtsam.Pose3(), camera_intrinsics)
+            camera = gtsam.PinholeCameraCal3_S2(camera_pose, camera_intrinsics)
             pixel = camera.project(point_camera_frame)
             error = pixel - keypoint_measurement
 

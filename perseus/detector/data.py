@@ -36,7 +36,7 @@ class AugmentationConfig:
 
 @dataclass(frozen=True)
 class KeypointDatasetConfig:
-    dataset_path: str = "data/2024-01-12_17-21-39/mjc_data.hdf5"
+    dataset_path: str = "data/qwerty_aggregated/mjc_data.hdf5"
 
 
 @dataclass(frozen=True)

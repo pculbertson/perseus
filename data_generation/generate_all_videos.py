@@ -23,7 +23,7 @@ parser.add_argument(
     "--num_videos", type=int, default=2500, help="Number of videos to generate."
 )
 parser.add_argument(
-    "--num_workers", type=int, default=16, help="Number of workers to use."
+    "--num_workers", type=int, default=8, help="Number of workers to use."
 )
 # TODO(pculbert): Expose all video generationn arguments.
 
