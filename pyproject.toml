@@ -94,6 +94,8 @@ ignore = [
     "D212",  # multi-line docstring summary at first line
     "D213",  # multi-line docstring summary at second line
     "PLR0913",  # Too many arguments in function definition
+    "N803",  # Argument name <argument> should be lowercase
+    "N806",  # Variable in function should be lowercase
 ]
 
 [tool.ruff.lint.isort]
