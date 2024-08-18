@@ -1,16 +1,26 @@
 import os
+import re
 from dataclasses import dataclass
+from typing import Callable, Tuple, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
 import tyro
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: N817
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import wandb
+from perseus import ROOT
 from perseus.detector.data import AugmentationConfig, KeypointAugmentation, KeypointDataset, KeypointDatasetConfig
+from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
 from perseus.detector.models import KeypointCNN, KeypointGaussian, YOLOModel
+from perseus.detector.utils import rank_print
 from wandb.util import generate_id
 
 wandb.require("core")  # Use new wandb backend.
@@ -53,165 +63,302 @@ class TrainConfig:
     n_keypoints: int = 8
     in_channels: int = 3
 
+    # Whether to use multi-gpu training
+    multigpu: bool = False
+
+    # If using multigpu, which gpu ids to use
+    gpu_ids: str = re.sub(r"[\[\]\s]", "", str([_ for _ in range(torch.cuda.device_count())]))  # "0,1,2,..."
+
+    # Whether to compile the model
+    compile: bool = False
+
+    # Whether to use automatic mixed precision
+    amp: bool = True
+
+    # Random seed
+    random_seed: int = 42
+
     # Wandb config.
     wandb_project: str = "perseus-detector"
 
 
-def train(cfg: TrainConfig) -> None:  # noqa: PLR0912, PLR0915
-    """Train a keypoint detector model."""
-    # Create dataloader.
+def initialize_training(  # noqa: PLR0915
+    cfg: TrainConfig, rank: int = 0
+) -> Tuple[
+    torch.device,
+    DataLoader,
+    DataLoader,
+    nn.Module,
+    torch.optim.Optimizer,
+    ReduceLROnPlateau,  # TODO(ahl): generalize the type
+    Union[nn.Module, Callable[[torch.Tensor, torch.Tensor], torch.Tensor]],
+    DistributedSampler,
+    DistributedSampler,
+    torch.cuda.amp.GradScaler,
+    str,
+]:
+    """Initialize the training environment, especially (but not exclusively) for multi-gpu training.
+
+    Args:
+        cfg: The training configuration.
+        rank: The rank of the process.
+    """
+    # set random seed
+    torch.cuda.manual_seed_all(cfg.random_seed)
+    torch.manual_seed(cfg.random_seed)
+    np.random.seed(cfg.random_seed)
+
+    # getting datasets
     train_dataset = KeypointDataset(cfg.dataset_config, train=True)
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=cfg.batch_size,
-        shuffle=True,
-    )
-
-    train_augment = KeypointAugmentation(cfg.augmentation_config, train=True)
-
     val_dataset = KeypointDataset(cfg.dataset_config, train=False)
-    val_dataloader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=cfg.batch_size,
-        shuffle=True,
-    )
-    val_augment = KeypointAugmentation(
-        cfg.augmentation_config, train=False
-    )  # Still create this to do pixel coordinate conversion.
 
-    # Initialize model and loss function
+    # initializing the model + loss function
     if cfg.output_type == "gaussian":
-        model = KeypointGaussian(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W).to(cfg.device)
-
+        model = KeypointGaussian(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W)
         if model.cov_type == "chol":
-
-            def loss_fn(pred: torch.Tensor, pixel_coordinates: torch.Tensor) -> torch.Tensor:
-                mu, L = pred
-
-                return -torch.distributions.multivariate_normal.MultivariateNormal(mu, scale_tril=L).log_prob(
-                    pixel_coordinates
-                ).mean() - (cfg.n_keypoints / 2) * torch.log(torch.tensor(2 * np.pi))
-
+            loss_fn = lambda pred, pixel_coordinates: _gaussian_chol_loss_fn(pred, pixel_coordinates, cfg.n_keypoints)  # noqa: E731
         elif model.cov_type == "diag":
-
-            def loss_fn(pred: torch.Tensor, pixel_coordinates: torch.Tensor) -> torch.Tensor:
-                mu, sigma = pred
-
-                return -torch.distributions.multivariate_normal.MultivariateNormal(mu, sigma).log_prob(
-                    pixel_coordinates
-                ).mean() - (cfg.n_keypoints / 2) * torch.log(torch.tensor(2 * np.pi))
-
+            loss_fn = lambda pred, pixel_coordinates: _gaussian_diag_loss_fn(pred, pixel_coordinates, cfg.n_keypoints)  # noqa: E731
+        else:
+            raise ValueError(f"Invalid covariance type: {model.cov_type}! Must be 'chol' or 'diag'.")
     elif cfg.output_type == "regression":
-        model = KeypointCNN(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W).to(cfg.device)
+        model = KeypointCNN(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W)
         loss_fn = nn.SmoothL1Loss(beta=1.0)
     elif cfg.output_type == "yolo":
-        model = YOLOModel(version=10, size="n", n_keypoints=8).to(cfg.device)
+        model = YOLOModel(version=10, size="n", n_keypoints=8)
         loss_fn = nn.SmoothL1Loss(beta=1.0)
     else:
         raise NotImplementedError(f"Output type {cfg.output_type} not implemented.")
 
-    # Initialize optimizer.
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5, verbose=True)
+    # configuring setup based on whether we are using multi-gpu training or not
+    if cfg.multigpu:
+        print(f"Creating rank {rank} dataloaders...")
 
-    # Initialize wandb.
-    wandb_id = generate_id()
-    wandb.init(
-        project=cfg.wandb_project,
-        config=cfg,
-        id=wandb_id,
-        resume="allow",
+        num_gpus = cfg.gpu_ids.count(",") + 1  # gpu_ids is a comma-separated string of ids
+
+        # initialize distributed training
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "12355"
+        dist.init_process_group("nccl", rank=rank, world_size=num_gpus)
+
+        # each process gets its own device specified by the rank
+        device = torch.device("cuda", rank)
+
+        # distributed samplers associated with each process
+        train_sampler = DistributedSampler(
+            train_dataset,
+            num_replicas=num_gpus,
+            rank=rank,
+            shuffle=True,
+        )
+        val_sampler = DistributedSampler(
+            val_dataset,
+            num_replicas=num_gpus,
+            rank=rank,
+            shuffle=False,
+        )
+        train_shuffle = None
+        val_shuffle = None
+
+        # wrapping model in DDP + sending to device
+        model = DDP(model.to(device), device_ids=[rank])
+
+    else:
+        print("Creating dataloaders...")
+
+        # single gpu training only has one device
+        device = torch.device(cfg.device)
+
+        # no special samplers for single gpu training
+        train_sampler = None
+        val_sampler = None
+        train_shuffle = True
+        val_shuffle = False
+
+        # sending model to device
+        model = model.to(device)
+
+    # creating dataloaders
+    num_workers = 4  # TODO(ahl): optimize this instead of using a magic number
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=train_shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        sampler=train_sampler,
+        multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
+    )
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=cfg.batch_size,
+        shuffle=val_shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        sampler=val_sampler,
+        multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
     )
 
-    # Train model.
+    # checking for model compilation
+    if cfg.compile:
+        print("Compiling model...")
+        model = torch.compile(model, mode="reduce-overhead")  # compiled model
+
+    # optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5)
+    scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
+
+    # wandb - only log if rank is 0 (will be 0 by default for single-gpu training)
+    wandb_id = generate_id()
+    if rank == 0:
+        wandb.init(project=cfg.wandb_project, config=cfg, id=wandb_id, resume="allow")
+
+    return (
+        device,
+        train_dataloader,
+        val_dataloader,
+        model,
+        optimizer,
+        scheduler,
+        loss_fn,
+        train_sampler,
+        val_sampler,
+        scaler,
+        wandb_id,
+    )
+
+
+def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
+    """Train a keypoint detector model."""
+    # Initialize training environment.
+    (
+        device,
+        train_dataloader,
+        val_dataloader,
+        model,
+        optimizer,
+        scheduler,
+        loss_fn,
+        train_sampler,
+        _,  # val_sampler
+        scaler,
+        wandb_id,
+    ) = initialize_training(cfg, rank)
+
+    # Augmentation models.
+    train_augment = KeypointAugmentation(cfg.augmentation_config, train=True)
+    val_augment = KeypointAugmentation(cfg.augmentation_config, train=False)  # for pixel coordinate conversion
+
+    # Main loop.
     for epoch in range(cfg.n_epochs):
-        # Train model.
+        if cfg.multigpu:
+            dist.barrier()
+            train_sampler.set_epoch(epoch)
+
+        # Training loop.
         model.train()
-        for example in tqdm(train_dataloader, desc=f"Epoch {epoch}", total=len(train_dataloader)):
-            images = example["image"]
-            pixel_coordinates = example["pixel_coordinates"]
+        losses = []
+        for example in tqdm(
+            train_dataloader,
+            desc=f"Iterations [Epoch {epoch}/{cfg.n_epochs}]",
+            total=len(train_dataloader),
+            leave=False,
+            disable=(rank != 0),  # only rank 0 prints progress
+        ):
+            with torch.autocast(
+                device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
+            ):
+                # Load data onto device.
+                images = example["image"].to(device)
+                pixel_coordinates = example["pixel_coordinates"].to(device)
 
-            # Move to device.
-            pixel_coordinates = pixel_coordinates.to(cfg.device)
-            images = images.to(cfg.device)
+                # Augment.
+                images, pixel_coordinates = train_augment(images, pixel_coordinates)
 
-            # Augment data.
-            images, pixel_coordinates = train_augment(images, pixel_coordinates)
+                # Forward pass.
+                if cfg.output_type == "yolo":
+                    # the yolov10 model uses a dual loss - we just add the one-to-many and one-to-one paths
+                    # [WARNING] this might make it hard to compare the train perf of the yolo model to the other models
+                    pred_o2o, pred_o2m = model(images)
+                    loss_o2o = loss_fn(pred_o2o, pixel_coordinates)
+                    loss_o2m = loss_fn(pred_o2m, pixel_coordinates)
+                    loss = loss_o2o + loss_o2m  # TODO(ahl): check whether this is batch-averaged
+                else:
+                    pred = model(images)  # TODO(pculbert): add some validation / shape checking.
+                    loss = loss_fn(pred, pixel_coordinates)
 
-            # Forward pass.
-            if cfg.output_type == "yolo":
-                # the yolo model uses a dual loss - we just add the one-to-many and one-to-one paths
-                # [WARNING] this might make it hard to compare the train perf of the yolo model to the other models
-                pred_o2o, pred_o2m = model(images)
-                loss_o2o = loss_fn(pred_o2o, pixel_coordinates)
-                loss_o2m = loss_fn(pred_o2m, pixel_coordinates)
-                loss = loss_o2o + loss_o2m
-            else:
-                pred = model(images)
-
-                # TODO(pculbert): add some validation / shape checking.
-
-                # Compute loss.
-                loss = loss_fn(pred, pixel_coordinates)
+            # Log loss.
+            losses.append(loss)
+            if (not cfg.multigpu) or rank == 0:
+                wandb.log({"loss": loss.item()})
 
             # Backward pass.
             optimizer.zero_grad()
-            loss.backward()
 
-            # Clip gradients.
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            optimizer.step()
-
-            # Log to wandb.
-            wandb.log({"loss": loss.item()})
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # clip grads
+            scaler.step(optimizer)
+            scaler.update()
 
         if epoch % cfg.print_epochs == 0:
-            print(f"Loss: {loss.item()}")
+            rank_print(f"    Avg. Loss in Epoch: {torch.mean(torch.cat(torch.tensor(losses))).item()}", rank=rank)
 
+        # Validation loop.
         if epoch % cfg.val_epochs == 0:
-            # Validate model.
             model.eval()
             with torch.no_grad():
                 val_loss = 0
                 for example in tqdm(val_dataloader, desc="Validation", total=len(val_dataloader)):
-                    # Unpack example.
-                    images = example["image"]
-                    pixel_coordinates = example["pixel_coordinates"]
+                    with torch.autocast(
+                        device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
+                    ):
+                        images = example["image"].to_device(device)
+                        pixel_coordinates = example["pixel_coordinates"].to_device(device)
+                        images, pixel_coordinates = val_augment(images, pixel_coordinates)  # augment
 
-                    # Move to device.
-                    pixel_coordinates = pixel_coordinates.to(cfg.device)
-                    images = images.to(cfg.device)
-
-                    # Augment data.
-                    images, pixel_coordinates = val_augment(images, pixel_coordinates)
-
-                    # Forward pass.
-                    # [NOTE] when the model is in eval mode, the yolo model will only return the one-to-one path,
-                    # so it becomes easier to compare the performance of the yolo model to the other models
-                    pred = model(images)
-
-                    # Compute loss.
-                    loss = loss_fn(pred, pixel_coordinates)
+                        # Forward pass.
+                        # [NOTE] when the model is in eval mode, the yolo model will only return the one-to-one path,
+                        # so it becomes easier to compare the performance of the yolo model to the other models
+                        pred = model(images)
+                        loss = loss_fn(pred, pixel_coordinates)
 
                     val_loss += loss.item()
 
                 val_loss /= len(val_dataloader)
 
                 # Log to wandb.
-                wandb.log({"val_loss": val_loss})
-                print(f"Validation loss: {val_loss}")
+                if (not cfg.multigpu) or rank == 0:
+                    wandb.log({"val_loss": val_loss})
+                rank_print(f"    Validation loss: {val_loss}", rank=rank)
 
-                # Update learning rate.
+                # Update learning rate based on val loss.
                 scheduler.step(val_loss)
 
+        # Model saving.
         if epoch % cfg.save_epochs == 0:
-            # Save model.
-            # Create output directory if it doesn't exist.
-            os.makedirs("outputs/models", exist_ok=True)
-            torch.save(model.state_dict(), f"outputs/models/{wandb_id}.pth")
+            os.makedirs("outputs/models", exist_ok=True)  # Create output directory if it doesn't exist.
+            if rank == 0:  # models are synced, but this avoids saving the same model num_gpus times
+                torch.save(model.state_dict(), f"{ROOT}/outputs/models/{wandb_id}.pth")
+
+    # Cleanup.
+    if cfg.multigpu:
+        dist.destroy_process_group()
+
+
+def _train_multigpu(rank: int, cfg: TrainConfig) -> None:
+    """Trivial wrapper for train.
+
+    Defined this way because rank must be the first argument in the function signature for mp.spawn.
+    This function must also be defined at a module top level to allow pickling.
+    """
+    train(cfg, rank=rank)
 
 
 if __name__ == "__main__":
     cfg = tyro.cli(TrainConfig)
-    train(cfg)
+    if cfg.multigpu:
+        mp.spawn(_train_multigpu, args=(cfg,), nprocs=cfg.gpu_ids.count(",") + 1, join=True)
+    else:
+        train(cfg, rank=0)
