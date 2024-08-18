@@ -255,7 +255,10 @@ class YOLOModel(nn.Module):
             y_o2o: tensor of predicted pixel coordinates for the one2one branch, shape=(batch_size, 2 * n_keypoints).
         """
         # yolo part
-        _detections, fpn_dicts = self.yolo_detector(x)  # [NOTE] detections unused
+        if self.training:
+            fpn_dicts = self.yolo_detector(x)
+        else:
+            _detections, fpn_dicts = self.yolo_detector(x)  # [NOTE] detections unused
         o2m_features = fpn_dicts["one2many"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
         o2o_features = fpn_dicts["one2one"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
 
