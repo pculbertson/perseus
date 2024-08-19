@@ -12,22 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-
-"""
-
 import logging
-
-import bpy
-import kubric as kb
-import perseus as ps
-
-from kubric.simulator import PyBullet
-from custom_renderer import CustomBlender as Blender
-from local_asset_source import LocalAssetSource
-import numpy as np
 import shutil
 
+import bpy
+import numpy as np
+from custom_renderer import CustomBlender as Blender
+from local_asset_source import LocalAssetSource
+
+import kubric as kb
+from kubric.simulator import PyBullet
+from perseus import ROOT
 
 # --- Some configuration values
 # the region in which to place objects [(min), (max)]
@@ -71,9 +66,7 @@ parser.add_argument("--floor_friction", type=float, default=0.3)
 parser.add_argument("--floor_restitution", type=float, default=0.5)
 parser.add_argument("--backgrounds_split", choices=["train", "test"], default="train")
 
-parser.add_argument(
-    "--camera", choices=["fixed_random", "linear_movement"], default="fixed_random"
-)
+parser.add_argument("--camera", choices=["fixed_random", "linear_movement"], default="fixed_random")
 parser.add_argument("--max_camera_movement", type=float, default=4.0)
 parser.add_argument("--max_motion_blur", type=float, default=0.5)
 
@@ -82,20 +75,21 @@ parser.add_argument("--max_motion_blur", type=float, default=0.5)
 parser.add_argument(
     "--kubasic_assets",
     type=str,
-    default="data_generation/assets/KuBasic.json",
+    default=f"{ROOT}/data_generation/assets/KuBasic.json",
 )
 parser.add_argument(
     "--hdri_assets",
     type=str,
-    default="data_generation/assets/HDRI_haven.json",
+    default=f"{ROOT}/data_generation/assets/HDRI_haven.json",
 )
-parser.add_argument("--gso_assets", type=str, default="data_generation/assets/GSO.json")
+parser.add_argument("--gso_assets", type=str, default=f"{ROOT}/data_generation/assets/GSO.json")
 parser.add_argument("--save_state", dest="save_state", action="store_true")
 parser.set_defaults(save_state=False, frame_end=24, frame_rate=12, resolution=256)
 FLAGS = parser.parse_args()
 
 # --- Common setups & resources
 scene, rng, output_dir, scratch_dir = kb.setup(FLAGS)
+output_dir = ROOT / output_dir  # changing the output_dir to an absolute path
 
 try:
     motion_blur = rng.uniform(0, FLAGS.max_motion_blur)
@@ -125,14 +119,10 @@ try:
     # background HDRI
     train_backgrounds, test_backgrounds = hdri_source.get_test_split(fraction=0.1)
     if FLAGS.backgrounds_split == "train":
-        logging.info(
-            "Choosing one of the %d training backgrounds...", len(train_backgrounds)
-        )
+        logging.info("Choosing one of the %d training backgrounds...", len(train_backgrounds))
         hdri_id = rng.choice(train_backgrounds)
     else:
-        logging.info(
-            "Choosing one of the %d held-out backgrounds...", len(test_backgrounds)
-        )
+        logging.info("Choosing one of the %d held-out backgrounds...", len(test_backgrounds))
         hdri_id = rng.choice(test_backgrounds)
     background_hdri = hdri_source.create(asset_id=hdri_id)
     # assert isinstance(background_hdri, kb.Texture)
@@ -160,38 +150,27 @@ try:
         inner_radius: float = 8.0,
         outer_radius: float = 12.0,
         z_offset: float = 0.1,
-    ):
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Sample a linear path which starts and ends within a half-sphere shell."""
         while True:
-            camera_start = np.array(
-                kb.sample_point_in_half_sphere_shell(
-                    inner_radius, outer_radius, z_offset
-                )
-            )
+            camera_start = np.array(kb.sample_point_in_half_sphere_shell(inner_radius, outer_radius, z_offset))
             direction = rng.rand(3) - 0.5
             movement = direction / np.linalg.norm(direction) * movement_speed
             camera_end = camera_start + movement
-            if (
-                inner_radius <= np.linalg.norm(camera_end) <= outer_radius
-                and camera_end[2] > z_offset
-            ):
+            if inner_radius <= np.linalg.norm(camera_end) <= outer_radius and camera_end[2] > z_offset:
                 return camera_start, camera_end
 
     def get_linear_lookat_motion_start_end(
         inner_radius: float = 1.0,
         outer_radius: float = 4.0,
-    ):
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Sample a linear path which goes through the workspace center."""
         while True:
             # Sample a point near the workspace center that the path travels through
-            camera_through = np.array(
-                kb.sample_point_in_half_sphere_shell(0.0, inner_radius, 0.0)
-            )
+            camera_through = np.array(kb.sample_point_in_half_sphere_shell(0.0, inner_radius, 0.0))
             while True:
                 # Sample one endpoint of the trajectory
-                camera_start = np.array(
-                    kb.sample_point_in_half_sphere_shell(0.0, outer_radius, 0.0)
-                )
+                camera_start = np.array(kb.sample_point_in_half_sphere_shell(0.0, outer_radius, 0.0))
                 if camera_start[-1] < inner_radius:
                     break
 
@@ -202,7 +181,7 @@ try:
 
             # Second point will probably be closer to the workspace center than the
             # first point.  Get extra augmentation by randomly swapping first and last.
-            if rng.rand(1)[0] < 0.5:
+            if rng.rand(1)[0] < 0.5:  # noqa: PLR2004
                 tmp = camera_start
                 camera_start = camera_end
                 camera_end = tmp
@@ -212,14 +191,9 @@ try:
     logging.info("Setting up the Camera...")
     scene.camera = kb.PerspectiveCamera(focal_length=35.0, sensor_width=32)
     if FLAGS.camera == "fixed_random":
-        scene.camera.position = kb.sample_point_in_half_sphere_shell(
-            inner_radius=7.0, outer_radius=9.0, offset=0.2
-        )
+        scene.camera.position = kb.sample_point_in_half_sphere_shell(inner_radius=7.0, outer_radius=9.0, offset=0.2)
         scene.camera.look_at((0, 0, 0))
-    elif (
-        FLAGS.camera == "linear_movement"
-        or FLAGS.camera == "linear_movement_linear_lookat"
-    ):
+    elif FLAGS.camera in ["linear_movement", "linear_movement_linear_lookat"]:
         is_panning = FLAGS.camera == "linear_movement_linear_lookat"
         camera_inner_radius = 6.0 if is_panning else 8.0
         camera_start, camera_end = get_linear_camera_motion_start_end(
@@ -233,17 +207,10 @@ try:
         # we start one frame early and end one frame late to ensure that
         # forward and backward flow are still consistent for the last and first frames
         for frame in range(FLAGS.frame_start - 1, FLAGS.frame_end + 2):
-            interp = (frame - FLAGS.frame_start + 1) / (
-                FLAGS.frame_end - FLAGS.frame_start + 3
-            )
-            scene.camera.position = interp * np.array(camera_start) + (
-                1 - interp
-            ) * np.array(camera_end)
+            interp = (frame - FLAGS.frame_start + 1) / (FLAGS.frame_end - FLAGS.frame_start + 3)
+            scene.camera.position = interp * np.array(camera_start) + (1 - interp) * np.array(camera_end)
             if is_panning:
-                scene.camera.look_at(
-                    interp * np.array(lookat_start)
-                    + (1 - interp) * np.array(lookat_end)
-                )
+                scene.camera.look_at(interp * np.array(lookat_start) + (1 - interp) * np.array(lookat_end))
             else:
                 scene.camera.look_at((0, 0, 0))
             scene.camera.keyframe_insert("position", frame)
@@ -259,11 +226,9 @@ try:
         active_split = test_split
 
     # add STATIC objects
-    num_static_objects = rng.randint(
-        FLAGS.min_num_static_objects, FLAGS.max_num_static_objects + 1
-    )
+    num_static_objects = rng.randint(FLAGS.min_num_static_objects, FLAGS.max_num_static_objects + 1)
     logging.info("Randomly placing %d static objects:", num_static_objects)
-    for i in range(num_static_objects):
+    for _ in range(num_static_objects):
         obj = gso.create(asset_id=rng.choice(active_split))
         assert isinstance(obj, kb.FileBasedObject)
         scale = rng.uniform(0.75, 3.0)
@@ -272,9 +237,7 @@ try:
         obj.metadata["scale"] = scale
         obj.metadata["abs_scale"] = abs_scale
         scene += obj
-        kb.move_until_no_overlap(
-            obj, simulator, spawn_region=STATIC_SPAWN_REGION, rng=rng
-        )
+        kb.move_until_no_overlap(obj, simulator, spawn_region=STATIC_SPAWN_REGION, rng=rng)
         obj.friction = 1.0
         obj.restitution = 0.0
         obj.metadata["is_dynamic"] = False
@@ -296,9 +259,9 @@ try:
 
     mjc = kb.FileBasedObject(
         asset_id="mjc",
-        render_filename="data_generation/assets/mjc.glb",
+        render_filename=f"{ROOT}/data_generation/assets/mjc.glb",
         bounds=((-1, -1, -1), (1, 1, 1)),
-        simulation_filename="data_generation/assets/mjc.urdf",
+        simulation_filename=f"{ROOT}/data_generation/assets/mjc.urdf",
     )
     mjc.velocity = rng.uniform(*MJC_VELOCITY_RANGE) - [
         mjc.position[0],
@@ -330,16 +293,12 @@ try:
                 node.inputs["IOR"].default_value = ior
                 print(specular, roughness)
 
-    kb.move_until_no_overlap(
-        mjc, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng, max_trials=1000
-    )
+    kb.move_until_no_overlap(mjc, simulator, spawn_region=MJC_SPAWN_REGION, rng=rng, max_trials=1000)
 
     # Add DYNAMIC objects
-    num_dynamic_objects = rng.randint(
-        FLAGS.min_num_dynamic_objects, FLAGS.max_num_dynamic_objects + 1
-    )
+    num_dynamic_objects = rng.randint(FLAGS.min_num_dynamic_objects, FLAGS.max_num_dynamic_objects + 1)
     logging.info("Randomly placing %d dynamic objects:", num_dynamic_objects)
-    for i in range(num_dynamic_objects):
+    for _ in range(num_dynamic_objects):
         obj = gso.create(asset_id=rng.choice(active_split))
         assert isinstance(obj, kb.FileBasedObject)
         abs_scale = scale / np.max(obj.bounds[1] - obj.bounds[0])
@@ -347,9 +306,7 @@ try:
         obj.metadata["scale"] = scale
         obj.metadata["abs_scale"] = abs_scale
         scene += obj
-        kb.move_until_no_overlap(
-            obj, simulator, spawn_region=DYNAMIC_SPAWN_REGION, rng=rng
-        )
+        kb.move_until_no_overlap(obj, simulator, spawn_region=DYNAMIC_SPAWN_REGION, rng=rng)
         obj.velocity = rng.uniform(*VELOCITY_RANGE) - [
             obj.position[0],
             obj.position[1],
@@ -380,11 +337,7 @@ try:
 
     # --- Postprocessing
     kb.compute_visibility(data_stack["segmentation"], scene.assets)
-    visible_foreground_assets = [
-        asset
-        for asset in scene.foreground_assets
-        if np.max(asset.metadata["visibility"]) > 0
-    ]
+    visible_foreground_assets = [asset for asset in scene.foreground_assets if np.max(asset.metadata["visibility"]) > 0]
     visible_foreground_assets = sorted(  # sort assets by their visibility
         visible_foreground_assets,
         key=lambda asset: np.sum(asset.metadata["visibility"]),
@@ -398,9 +351,7 @@ try:
 
     # Save to image files
     kb.write_image_dict(data_stack, output_dir)
-    kb.post_processing.compute_bboxes(
-        data_stack["segmentation"], visible_foreground_assets
-    )
+    kb.post_processing.compute_bboxes(data_stack["segmentation"], visible_foreground_assets)
 
     # --- Metadata
     logging.info("Collecting and storing metadata for each object.")
@@ -416,9 +367,7 @@ try:
     kb.write_json(
         filename=output_dir / "events.json",
         data={
-            "collisions": kb.process_collisions(
-                collisions, scene, assets_subset=visible_foreground_assets
-            ),
+            "collisions": kb.process_collisions(collisions, scene, assets_subset=visible_foreground_assets),
         },
     )
 

@@ -35,7 +35,7 @@ dependencies = [
 # optional
 [project.optional-dependencies]
 datagen = [
-    "bpy>=4.2.0",
+    "bpy==3.6.0",
     "openexr>=3.2.4",
     "pybullet>=3.2.6",
     "tensorflow>=2.17.0",
@@ -121,4 +121,4 @@ docstring-code-format = true
 docstring-code-line-length = "dynamic"
 
 [tool.hatch.build.targets.wheel]
-include = ["perseus*"]
+include = ["perseus*", "kubric*"]
