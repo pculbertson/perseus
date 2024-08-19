@@ -11,6 +11,8 @@ from datetime import datetime
 import tensorflow as tf
 from tqdm import tqdm
 
+from perseus import ROOT
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
@@ -31,7 +33,7 @@ def generate(args: argparse.Namespace) -> None:
     subprocess.run(
         [
             "python",
-            "data_generation/generate_one_video.py",
+            f"{ROOT}/data_generation/generate_one_video.py",
             "--job-dir",
             f"data/{args.run_id}/{args.job_id}",
         ],
