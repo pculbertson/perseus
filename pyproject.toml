@@ -28,6 +28,7 @@ dependencies = [
     "plotly>=5.18.0",
     "qasync>=0.27.1",
     "pypose>=0.6.7",
+    "tensorflow>=2.17.0",
     "ultralytics>=8.2.78",
     "wandb>=0.17.7",
 ]
