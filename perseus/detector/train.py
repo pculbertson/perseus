@@ -64,7 +64,7 @@ class TrainConfig:
     in_channels: int = 3
 
     # Whether to use multi-gpu training
-    multigpu: bool = False
+    multigpu: bool = True
 
     # If using multigpu, which gpu ids to use
     gpu_ids: str = re.sub(r"[\[\]\s]", "", str([_ for _ in range(torch.cuda.device_count())]))  # "0,1,2,..."
@@ -263,7 +263,6 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             train_dataloader,
             desc=f"Iterations [Epoch {epoch}/{cfg.n_epochs}]",
             total=len(train_dataloader),
-            leave=False,
             disable=(rank != 0),  # only rank 0 prints progress
         ):
             with torch.autocast(
@@ -289,7 +288,7 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     loss = loss_fn(pred, pixel_coordinates)
 
             # Log loss.
-            losses.append(loss)
+            losses.append(loss.item())
             if (not cfg.multigpu) or rank == 0:
                 wandb.log({"loss": loss.item()})
 
@@ -303,19 +302,24 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             scaler.update()
 
         if epoch % cfg.print_epochs == 0:
-            rank_print(f"    Avg. Loss in Epoch: {torch.mean(torch.cat(torch.tensor(losses))).item()}", rank=rank)
+            rank_print(f"    Avg. Loss in Epoch: {np.mean(losses)}", rank=rank)
 
         # Validation loop.
         if epoch % cfg.val_epochs == 0:
             model.eval()
             with torch.no_grad():
                 val_loss = 0
-                for example in tqdm(val_dataloader, desc="Validation", total=len(val_dataloader)):
+                for example in tqdm(
+                    val_dataloader,
+                    desc="Validation",
+                    total=len(val_dataloader),
+                    disable=(rank != 0),  # only rank 0 prints progress
+                ):
                     with torch.autocast(
                         device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
                     ):
-                        images = example["image"].to_device(device)
-                        pixel_coordinates = example["pixel_coordinates"].to_device(device)
+                        images = example["image"].to(device)
+                        pixel_coordinates = example["pixel_coordinates"].to(device)
                         images, pixel_coordinates = val_augment(images, pixel_coordinates)  # augment
 
                         # Forward pass.
