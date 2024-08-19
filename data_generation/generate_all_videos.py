@@ -11,6 +11,7 @@ from datetime import datetime
 import tensorflow as tf
 from tqdm import tqdm
 
+import kubric as kb
 from perseus import ROOT
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -19,7 +20,7 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 logging.getLogger().setLevel(logging.ERROR)
 
 # Setup args.
-parser = argparse.ArgumentParser()
+parser = kb.ArgumentParser()
 parser.add_argument("--num_videos", type=int, default=2500, help="Number of videos to generate.")
 parser.add_argument("--num_workers", type=int, default=8, help="Number of workers to use.")
 # TODO(pculbert): Expose all video generationn arguments.
