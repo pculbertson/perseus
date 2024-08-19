@@ -1,34 +1,29 @@
 """Script to generate all videos for the dataset."""
 
+import argparse
+import logging
 import multiprocessing
+import os
 import subprocess
 import uuid
-from tqdm import tqdm
-import kubric as kb
 from datetime import datetime
-import tensorflow as tf
 
-import os
+import tensorflow as tf
+from tqdm import tqdm
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-import logging
-
 logging.getLogger().setLevel(logging.ERROR)
 
 # Setup args.
-parser = kb.ArgumentParser()
-parser.add_argument(
-    "--num_videos", type=int, default=2500, help="Number of videos to generate."
-)
-parser.add_argument(
-    "--num_workers", type=int, default=8, help="Number of workers to use."
-)
+parser = argparse.ArgumentParser()
+parser.add_argument("--num_videos", type=int, default=2500, help="Number of videos to generate.")
+parser.add_argument("--num_workers", type=int, default=8, help="Number of workers to use.")
 # TODO(pculbert): Expose all video generationn arguments.
 
 
-def generate(args):
+def generate(args: argparse.Namespace) -> None:
     """Generate a video."""
     # Create random hash for this video.
     args.job_id = str(uuid.uuid4())
@@ -39,7 +34,8 @@ def generate(args):
             "data_generation/generate_one_video.py",
             "--job-dir",
             f"data/{args.run_id}/{args.job_id}",
-        ]
+        ],
+        check=False,
     )
 
 
