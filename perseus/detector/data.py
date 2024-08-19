@@ -72,22 +72,22 @@ class KeypointDataset(Dataset):
             dataset_path = cfg.dataset_path
         with h5py.File(dataset_path, "r") as f:
             if self.train:
-                self.dataset = f["train"]
+                dataset = f["train"]
             else:
-                self.dataset = f["test"]
+                dataset = f["test"]
 
             self.W = f.attrs["W"]
             self.H = f.attrs["H"]
 
-            self.pixel_coordinates = torch.from_numpy(self.dataset["pixel_coordinates"][()])
-            self.object_poses = pp.SE3(torch.from_numpy(self.dataset["object_poses"][()]))
-            self.images = self.dataset["images"][()][..., :3]
-            self.object_scales = torch.from_numpy(self.dataset["object_scales"][()])
-            self.camera_poses = pp.SE3(self.dataset["camera_poses"][()])
-            self.camera_intrinsics = torch.from_numpy(self.dataset["camera_intrinsics"][()])
-            self.image_filenames = self.dataset["image_filenames"][()]
+            self.pixel_coordinates = torch.from_numpy(dataset["pixel_coordinates"][()])
+            self.object_poses = pp.SE3(torch.from_numpy(dataset["object_poses"][()]))
+            self.images = dataset["images"][()][..., :3]
+            self.object_scales = torch.from_numpy(dataset["object_scales"][()])
+            self.camera_poses = pp.SE3(dataset["camera_poses"][()])
+            self.camera_intrinsics = torch.from_numpy(dataset["camera_intrinsics"][()])
+            self.image_filenames = dataset["image_filenames"][()]
 
-            print(f"Images shape: {self.images.shape}")
+            # print(f"Images shape: {self.images.shape}")
 
     @property
     def num_trajectories(self) -> int:
@@ -109,7 +109,7 @@ class KeypointDataset(Dataset):
         image_idx = idx % self.images_per_trajectory
 
         image = kornia.utils.image_to_tensor(self.images[traj_idx][image_idx]) / 255.0
-        pixel_coordinates = self.pixel_coordinates[traj_idx][image_idx].clone()
+        pixel_coordinates = self.pixel_coordinates[traj_idx][image_idx]
 
         return {
             "image": image,
@@ -124,7 +124,7 @@ class KeypointDataset(Dataset):
     def get_trajectory(self, idx: int) -> dict:
         """Get a full trajectory from the dataset."""
         images = kornia.utils.image_to_tensor(self.images[idx]) / 255.0
-        pixel_coordinates = self.pixel_coordinates[idx].clone()
+        pixel_coordinates = self.pixel_coordinates[idx]
 
         return {
             "images": images,

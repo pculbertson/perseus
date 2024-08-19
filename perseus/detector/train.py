@@ -31,7 +31,7 @@ class TrainConfig:
     """Configuration for training."""
 
     # The batch size.
-    batch_size: int = 128
+    batch_size: int = 64
 
     # The (initial) learning rate set in the optimizer.
     learning_rate: float = 1e-3
@@ -161,7 +161,7 @@ def initialize_training(  # noqa: PLR0915
         val_shuffle = None
 
         # wrapping model in DDP + sending to device
-        model = DDP(model.to(device), device_ids=[rank])
+        model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=True)
 
     else:
         print("Creating dataloaders...")
@@ -253,7 +253,6 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
     # Main loop.
     for epoch in range(cfg.n_epochs):
         if cfg.multigpu:
-            dist.barrier()
             train_sampler.set_epoch(epoch)
 
         # Training loop.
@@ -263,12 +262,12 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             train_dataloader,
             desc=f"Iterations [Epoch {epoch}/{cfg.n_epochs}]",
             total=len(train_dataloader),
+            leave=True,
             disable=(rank != 0),  # only rank 0 prints progress
         ):
             with torch.autocast(
                 device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
             ):
-                # Load data onto device.
                 images = example["image"].to(device)
                 pixel_coordinates = example["pixel_coordinates"].to(device)
 
@@ -313,6 +312,7 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     val_dataloader,
                     desc="Validation",
                     total=len(val_dataloader),
+                    leave=True,
                     disable=(rank != 0),  # only rank 0 prints progress
                 ):
                     with torch.autocast(
