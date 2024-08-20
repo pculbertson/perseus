@@ -114,10 +114,13 @@ def merge(hdf5_list: list) -> None:  # noqa: PLR0915
         test.create_dataset("camera_poses", data=test_camera_poses)
         test.create_dataset("camera_intrinsics", data=test_camera_intrinsics)
         test.create_dataset("image_filenames", data=test_image_filenames)
-        breakpoint()
 
 
 if __name__ == "__main__":
-    hdf5_list = [f"{ROOT}/data/qwerty_aggregated/mjc_data.hdf5", f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5"]
+    hdf5_list = [
+        f"{ROOT}/data/qwerty_aggregated/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty_aggregated3/mjc_data.hdf5",
+    ]
     merge(hdf5_list)
     print("Merging complete.")

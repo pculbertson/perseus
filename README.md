@@ -43,7 +43,7 @@ For example, `generated_data_dir` might look like
 ```
 /path/to/perseus/data/2024-08-19_11-23-17
 ```
-IMPORTANT: before running `generate_and_label_keypoints.py`, copy create a file named `mjc_keypoints.json` in `<generated_data_dir>` with the following contents:
+IMPORTANT: before running `generate_and_label_keypoints.py`, create a file named `mjc_keypoints.json` in `<generated_data_dir>` with the following contents:
 ```
 [[-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1],
  [1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1]]
