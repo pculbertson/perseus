@@ -1,11 +1,19 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import h5py
 import kornia
+import numpy as np
 import pypose as pp
 import torch
 import tyro
+from super_gradients.common.decorators.factory_decorator import resolve_param
+from super_gradients.common.factories.transforms_factory import TransformsFactory
+from super_gradients.training.datasets.pose_estimation_datasets.abstract_pose_estimation_dataset import (
+    AbstractPoseEstimationDataset,
+)
+from super_gradients.training.samples import PoseEstimationSample
+from super_gradients.training.transforms.keypoint_transforms import AbstractKeypointTransform
 from torch.utils.data import Dataset
 
 from perseus import ROOT
@@ -232,6 +240,129 @@ class KeypointAugmentation(torch.nn.Module):
         coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
 
         return images, coords.reshape(B, -1)
+
+
+# ######## #
+# YOLO-NAS #
+# ######## #
+
+
+class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
+    """Dataset for keypoint detection for fine-tuning a YOLO-NAS model.
+
+    The super-gradients format is fairly particular, and they provide a trainer for fine-tuning their models, so we
+    create a dataset using their conventions to adapt things here.
+
+    Follows this tutorial:
+    https://github.com/Deci-AI/super-gradients/blob/master/notebooks/YoloNAS_Pose_Fine_Tuning_Animals_Pose_Dataset.ipynb
+    """
+
+    @resolve_param("transforms", TransformsFactory())
+    def __init__(
+        self,
+        data_dir: str,
+        transforms: Optional[List[AbstractKeypointTransform]] = None,
+        train: bool = True,
+        size: Optional[int] = None,
+    ) -> None:
+        """Initialize the dataset.
+
+        Everything is in unnormalized coordinates in both the hdf5 file we generate as well as the YOLO-NAS format.
+
+        Args:
+            data_dir: The directory containing the hdf5 dataset.
+            transforms: The transforms to apply to the dataset.
+            train: Whether to load the training or test set.
+            size: The number of samples
+        """
+        self.edge_links = [
+            [0, 1],
+            [0, 2],
+            [0, 4],
+            [1, 3],
+            [1, 5],
+            [2, 3],
+            [2, 6],
+            [3, 7],
+            [4, 5],
+            [4, 6],
+            [5, 7],
+            [6, 7],
+        ]
+        self.edge_colors = [
+            [31, 119, 180],
+            [174, 199, 232],
+            [255, 127, 14],
+            [255, 187, 120],
+            [44, 160, 44],
+            [152, 223, 138],
+            [214, 39, 40],
+            [255, 152, 150],
+            [148, 103, 189],
+            [197, 176, 213],
+            [140, 86, 75],
+            [196, 156, 148],
+        ]  # hardcoded colors from the tab20 colormap
+        self.keypoint_colors = [
+            [227, 119, 194],
+            [247, 182, 210],
+            [127, 127, 127],
+            [199, 199, 199],
+            [188, 189, 34],
+            [219, 219, 141],
+            [23, 190, 207],
+            [158, 218, 229],
+        ]  # hardcoded colors from the tab20 colormap
+        super().__init__(
+            transforms=transforms if transforms is not None else [],
+            num_joints=8,  # hardcoded to 8 for the cube asset
+            edge_links=self.edge_links,
+            edge_colors=self.edge_colors,
+            keypoint_colors=self.keypoint_colors,
+        )
+
+        with h5py.File(data_dir, "r") as f:
+            if train:
+                dataset = f["train"]
+            else:
+                dataset = f["test"]
+
+            _images = dataset["images"][()]  # (num_videos, num_frames_per_video, H, W, 3)
+            self.images = _images.reshape(-1, *_images.shape[-3:])  # (num_images, H, W, 3)
+            self.const_mask = np.ones(self.images.shape[-3:-1])  # (H, W, 3)
+            _joints = dataset["pixel_coordinates"][()]
+            joints = _joints.reshape(-1, *_joints.shape[-2:])  # (num_images, 8, 2)
+            self.joints = np.concatenate(
+                [joints, np.ones(joints.shape[:-1] + (1,))], axis=-1
+            )  # (num_images, 8, 3), all joints are "visible"
+            bboxes_x_min = np.min(self.joints[:, :, 0], axis=1)
+            bboxes_y_min = np.min(self.joints[:, :, 1], axis=1)
+            bboxes_x_max = np.max(self.joints[:, :, 0], axis=1)
+            bboxes_y_max = np.max(self.joints[:, :, 1], axis=1)
+            bboxes_w = bboxes_x_max - bboxes_x_min
+            bboxes_h = bboxes_y_max - bboxes_y_min
+            self.bboxes_xywh = np.stack([bboxes_x_min, bboxes_y_min, bboxes_w, bboxes_h], axis=1)  # (num_images, 4)
+
+            if size is not None:
+                self.images = self.images[:size]
+                self.joints = self.joints[:size]
+                self.bboxes_xywh = self.bboxes_xywh[:size]
+
+    def __len__(self) -> int:
+        """The number of images in the dataset."""
+        return len(self.images)
+
+    def load_sample(self, index: int) -> PoseEstimationSample:
+        """Load a sample from the dataset."""
+        return PoseEstimationSample(
+            image=self.images[index],
+            mask=self.const_mask,
+            joints=self.joints[index][None, ...],
+            areas=None,
+            bboxes_xywh=self.bboxes_xywh[index][None, ...],
+            is_crowd=None,
+            additional_samples=None,
+        )
 
 
 if __name__ == "__main__":
