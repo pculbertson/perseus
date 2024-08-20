@@ -31,7 +31,7 @@ python perseus/detector/train.py
 python perseus/detector/train.py -h
 ```
 
-To generate data:
+To generate data, run the following in the `data_generation` directory:
 ```
 # generates 2.5k videos each with 24 frames
 python generate_all_videos.py
