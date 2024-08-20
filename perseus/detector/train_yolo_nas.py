@@ -15,6 +15,8 @@ from super_gradients.training.transforms.keypoints import (
     KeypointsImageStandardize,
 )
 from super_gradients.training.utils.callbacks import ExtremeBatchPoseEstimationVisualizationCallback, Phase
+
+# from super_gradients.training.utils.distributed_training_utils import setup_device
 from super_gradients.training.utils.early_stopping import EarlyStop
 from torch.utils.data import DataLoader
 
@@ -46,13 +48,13 @@ def train() -> str:
         data_dir=f"{ROOT}/data/merged.hdf5",
         transforms=train_transforms,
         train=True,
-        size=1024,  # [DEBUG]
+        # size=1024,  # [DEBUG]
     )
     val_dataset = KeypointDatasetYoloNas(
         data_dir=f"{ROOT}/data/merged.hdf5",
         transforms=val_transforms,
         train=False,
-        size=1024,  # [DEBUG]
+        # size=1024,  # [DEBUG]
     )
     print("Created datasets!")
 
@@ -121,7 +123,7 @@ def train() -> str:
         "initial_lr": 5e-4,
         "lr_mode": "cosine",
         "cosine_final_lr_ratio": 0.05,
-        "max_epochs": 1,  # [DEBUG]
+        "max_epochs": 100,
         "zero_weight_decay_on_bias_and_bn": True,
         "batch_accumulate": 1,
         "average_best_models": True,
