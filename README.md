@@ -30,3 +30,27 @@ python perseus/detector/train.py
 # to see the help message:
 python perseus/detector/train.py -h
 ```
+
+To generate data:
+```
+# generates 2.5k videos each with 24 frames
+python generate_all_videos.py
+
+# generates labels from all the frames
+python generate_and_label_keypoints.py --job-dir <generated_data_dir>
+```
+For example, `generated_data_dir` might look like
+```
+/path/to/perseus/data/2024-08-19_11-23-17
+```
+IMPORTANT: before running `generate_and_label_keypoints.py`, copy create a file named `mjc_keypoints.json` in `<generated_data_dir>` with the following contents:
+```
+[[-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1],
+ [1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1]]
+```
+This will place the keypoints at the corners of the cube.
+
+To merge multiple datasets, edit the paths to the hdf5 files you want merged in the `merge_hdf5.py` script in the `data` subdirectory, and run:
+```
+python /path/to/perseus/data/merge_hdf5.py
+```

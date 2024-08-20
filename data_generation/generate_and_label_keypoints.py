@@ -1,29 +1,25 @@
+import copy
 import json
-from kubric import ArgumentParser
-import trimesh
 import os
-import numpy as np
-import multiprocessing
-import torch
-from tqdm import tqdm
-from data_generation.data_utils import to_SE3, get_pixel_coordinates, reorder_quaternion
+
 import h5py
 import numpy as np
-import copy
+import torch
+import trimesh
 from PIL import Image
+from tqdm import tqdm
+
+from data_generation.data_utils import get_pixel_coordinates, reorder_quaternion, to_SE3
+from kubric import ArgumentParser
 
 parser = ArgumentParser()
-parser.add_argument(
-    "--job-id", type=str, help="ID of job to process (for debug). Default: None."
-)
-parser.add_argument(
-    "--asset_id", type=str, help="ID of asset to process. Default: mjc.", default="mjc"
-)
+parser.add_argument("--job-id", type=str, help="ID of job to process (for debug). Default: None.")
+parser.add_argument("--asset_id", type=str, help="ID of asset to process. Default: mjc.", default="mjc")
 parser.add_argument(
     "--num_keypoints",
     type=int,
-    help="Number of keypoints to generate. Default: 32.",
-    default=32,
+    help="Number of keypoints to generate. Default: 8.",
+    default=8,
 )
 
 parser.add_argument(
@@ -41,7 +37,7 @@ parser.add_argument(
 )
 
 
-def get_keypoints(args):
+def get_keypoints(args: dict) -> np.ndarray:
     """Get keypoints for a given job."""
     # Load keypoints.
     keypoints_filename = os.path.join(args.job_dir, f"{args.asset_id}_keypoints.json")
@@ -55,7 +51,7 @@ def get_keypoints(args):
     return keypoints
 
 
-def generate_keypoints(args):
+def generate_keypoints(args: dict) -> np.ndarray:
     """Generate keypoints for a given model."""
     # Load object.
     metadata_filename = os.path.join(args.job_dir, args.job_id, "metadata.json")
@@ -63,9 +59,7 @@ def generate_keypoints(args):
         metadata = json.load(f)
 
     # Get model filename.
-    asset_info = [
-        dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id
-    ][0]
+    asset_info = [dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id][0]
     model_filename = asset_info["render_filename"]
 
     mesh = trimesh.load(model_filename, force="mesh")
@@ -82,9 +76,8 @@ def generate_keypoints(args):
     return keypoints
 
 
-def generate_data(args):
+def generate_data(args: dict) -> tuple:
     """Generate data for a given job."""
-
     # Load job metadata.
     metadata_filename = os.path.join(args.job_dir, args.job_id, "metadata.json")
     with open(metadata_filename, "r") as f:
@@ -95,15 +88,11 @@ def generate_data(args):
     H = metadata["flags"]["resolution"]
     W = metadata["flags"]["resolution"]
     camera_positions = torch.as_tensor(metadata["camera"]["positions"])
-    camera_quaternions = reorder_quaternion(
-        torch.as_tensor(metadata["camera"]["quaternions"])
-    )
+    camera_quaternions = reorder_quaternion(torch.as_tensor(metadata["camera"]["quaternions"]))
     camera_poses = to_SE3(camera_positions, camera_quaternions)
 
     # Get object poses.
-    object_dict = [
-        dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id
-    ][0]
+    object_dict = [dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id][0]
     object_abs_scale = torch.as_tensor(object_dict["abs_scale"])
     object_positions = torch.as_tensor(object_dict["positions"])
     object_quaternions = reorder_quaternion(torch.as_tensor(object_dict["quaternions"]))
@@ -113,29 +102,20 @@ def generate_data(args):
     keypoints = torch.as_tensor(args.keypoints).float() * object_abs_scale
 
     # Get pixel coordinates.
-    pixel_coordinates = get_pixel_coordinates(
-        keypoints, object_poses, camera_poses, fov, H, W
-    )
+    pixel_coordinates = get_pixel_coordinates(keypoints, object_poses, camera_poses, fov, H, W)
 
     # Get object scale.
-    object_scales = (
-        torch.as_tensor(object_dict["abs_scale"]).float().unsqueeze(0).expand(24)
-    )
+    object_scales = torch.as_tensor(object_dict["abs_scale"]).float().unsqueeze(0).expand(24)
 
     # Compute camera intrinsics.
     f_x = W / (2 * np.tan(fov / 2))
     f_y = H / (2 * np.tan(fov / 2))
-    camera_intrinsics = torch.tensor(
-        [[f_x, 0, W / 2], [0, f_y, H / 2], [0, 0, 1]], dtype=torch.float32
-    )
+    camera_intrinsics = torch.tensor([[f_x, 0, W / 2], [0, f_y, H / 2], [0, 0, 1]], dtype=torch.float32)
 
     camera_intrinsics = camera_intrinsics.unsqueeze(0).expand(24, -1, -1)
 
     # Load all rgb images in job dir.
-    rgb_filenames = [
-        os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png")
-        for ii in range(24)
-    ]
+    rgb_filenames = [os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png") for ii in range(24)]
 
     # Create an empty list to store the images
     rgb_images = []
@@ -159,34 +139,28 @@ def generate_data(args):
     )
 
 
-def plot_data(args):
+def plot_data(args: dict) -> None:
+    """Plot data for a given job."""
     # Debug plotting to check that everything is working.
     import matplotlib.pyplot as plt
 
     # Load pixel coordinates.
-    pixel_coordinates_filename = os.path.join(
-        args.job_dir, args.job_id, f"{args.asset_id}_pixel_coordinates.json"
-    )
+    pixel_coordinates_filename = os.path.join(args.job_dir, args.job_id, f"{args.asset_id}_pixel_coordinates.json")
 
     with open(pixel_coordinates_filename, "r") as f:
         pixel_coordinates = json.load(f)
 
     # Load all rgb images in job dir.
-    rgb_filenames = [
-        os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png")
-        for ii in range(24)
-    ]
+    rgb_filenames = [os.path.join(args.job_dir, args.job_id, f"rgba_{ii:05d}.png") for ii in range(24)]
 
     # Create debug directory if it doesn't exist.
     if not os.path.exists(os.path.join(args.job_dir, "debug")):
         os.makedirs(os.path.join(args.job_dir, "debug"))
 
     # Plot pixel coordinates on top of rgb images.
-    for ii, (rgb_filename, pixel_coordinate) in enumerate(
-        zip(rgb_filenames, pixel_coordinates)
-    ):
+    for ii, (rgb_filename, _pixel_coordinate) in enumerate(zip(rgb_filenames, pixel_coordinates, strict=False)):
         rgb = plt.imread(rgb_filename)
-        pixel_coordinate = np.array(pixel_coordinate)
+        pixel_coordinate = np.array(_pixel_coordinate)
 
         fig, ax = plt.subplots()
         ax.imshow(rgb, aspect="auto")
@@ -209,19 +183,16 @@ def plot_data(args):
         plt.close()
 
 
-def main(args):
+def main(args: dict) -> None:  # noqa: PLR0915
+    """Main function."""
     job_ids = (
         [args.job_id]
         if args.job_id
-        else [
-            ff
-            for ff in os.listdir(args.job_dir)
-            if os.path.isdir(os.path.join(args.job_dir, ff))
-        ]
+        else [ff for ff in os.listdir(args.job_dir) if os.path.isdir(os.path.join(args.job_dir, ff))]
     )
 
     args_list = [copy.deepcopy(args) for _ in range(len(job_ids))]
-    for jj, aa in zip(job_ids, args_list):
+    for jj, aa in zip(job_ids, args_list, strict=False):
         aa.job_id = jj
 
     keypoints = get_keypoints(args_list[0])
@@ -284,15 +255,9 @@ def main(args):
             "pixel_coordinates",
             data=torch.from_numpy(pixel_coords_list[:split_idx]),
         )
-        train.create_dataset(
-            "object_poses", data=torch.from_numpy(obj_poses_list[:split_idx])
-        )
-        train.create_dataset(
-            "object_scales", data=torch.from_numpy(obj_scales_list[:split_idx])
-        )
-        train.create_dataset(
-            "camera_poses", data=torch.from_numpy(camera_poses_list[:split_idx])
-        )
+        train.create_dataset("object_poses", data=torch.from_numpy(obj_poses_list[:split_idx]))
+        train.create_dataset("object_scales", data=torch.from_numpy(obj_scales_list[:split_idx]))
+        train.create_dataset("camera_poses", data=torch.from_numpy(camera_poses_list[:split_idx]))
         train.create_dataset(
             "camera_intrinsics",
             data=torch.from_numpy(camera_intrinsics_list[:split_idx]),
@@ -306,15 +271,9 @@ def main(args):
             "pixel_coordinates",
             data=torch.from_numpy(pixel_coords_list[split_idx:]),
         )
-        test.create_dataset(
-            "object_poses", data=torch.from_numpy(obj_poses_list[split_idx:])
-        )
-        test.create_dataset(
-            "object_scales", data=torch.from_numpy(obj_scales_list[split_idx:])
-        )
-        test.create_dataset(
-            "camera_poses", data=torch.from_numpy(camera_poses_list[split_idx:])
-        )
+        test.create_dataset("object_poses", data=torch.from_numpy(obj_poses_list[split_idx:]))
+        test.create_dataset("object_scales", data=torch.from_numpy(obj_scales_list[split_idx:]))
+        test.create_dataset("camera_poses", data=torch.from_numpy(camera_poses_list[split_idx:]))
         test.create_dataset(
             "camera_intrinsics",
             data=torch.from_numpy(camera_intrinsics_list[split_idx:]),
