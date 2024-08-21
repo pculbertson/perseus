@@ -1,4 +1,3 @@
-import itertools
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -56,7 +55,7 @@ def save_images_in_parallel(images: list, output_dir: str, mode: str, start_inde
     return filenames
 
 
-def merge(hdf5_list: list, output_dir: str) -> None:  # noqa: PLR0915
+def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> None:  # noqa: PLR0915
     """Merge multiple hdf5 datasets into a larger one.
 
     In particular, also merges all images into a new directory and updates the image filenames.
@@ -64,6 +63,7 @@ def merge(hdf5_list: list, output_dir: str) -> None:  # noqa: PLR0915
     Args:
         hdf5_list: list of hdf5 file paths to merge.
         output_dir: directory to save the merged images.
+        new_train_frac: fraction of data to use for training after merging (useful for rebalancing datasets).
     """
     # attributes
     num_keypoints = None
@@ -71,23 +71,13 @@ def merge(hdf5_list: list, output_dir: str) -> None:  # noqa: PLR0915
     H = None
     W = None
 
-    # train data
-    train_images = []
-    train_pixel_coordinates = []
-    train_object_poses = []
-    train_object_scales = []
-    train_camera_poses = []
-    train_camera_intrinsics = []
-    train_image_filenames = []
-
-    # test data
-    test_images = []
-    test_pixel_coordinates = []
-    test_object_poses = []
-    test_object_scales = []
-    test_camera_poses = []
-    test_camera_intrinsics = []
-    test_image_filenames = []
+    # all data
+    all_images = []
+    all_pixel_coordinates = []
+    all_object_poses = []
+    all_object_scales = []
+    all_camera_poses = []
+    all_camera_intrinsics = []
 
     # aggregating data
     print("Aggregating data...")
@@ -107,38 +97,50 @@ def merge(hdf5_list: list, output_dir: str) -> None:  # noqa: PLR0915
                 W = f.attrs["W"]
 
             # train data
-            train_images.append(f["train"]["images"][()])
-            train_pixel_coordinates.append(f["train"]["pixel_coordinates"][()])
-            train_object_poses.append(f["train"]["object_poses"][()])
-            train_object_scales.append(f["train"]["object_scales"][()])
-            train_camera_poses.append(f["train"]["camera_poses"][()])
-            train_camera_intrinsics.append(f["train"]["camera_intrinsics"][()])
+            all_images.append(f["train"]["images"][()])
+            all_pixel_coordinates.append(f["train"]["pixel_coordinates"][()])
+            all_object_poses.append(f["train"]["object_poses"][()])
+            all_object_scales.append(f["train"]["object_scales"][()])
+            all_camera_poses.append(f["train"]["camera_poses"][()])
+            all_camera_intrinsics.append(f["train"]["camera_intrinsics"][()])
 
             # test data
-            test_images.append(f["test"]["images"][()])
-            test_pixel_coordinates.append(f["test"]["pixel_coordinates"][()])
-            test_object_poses.append(f["test"]["object_poses"][()])
-            test_object_scales.append(f["test"]["object_scales"][()])
-            test_camera_poses.append(f["test"]["camera_poses"][()])
-            test_camera_intrinsics.append(f["test"]["camera_intrinsics"][()])
+            all_images.append(f["test"]["images"][()])
+            all_pixel_coordinates.append(f["test"]["pixel_coordinates"][()])
+            all_object_poses.append(f["test"]["object_poses"][()])
+            all_object_scales.append(f["test"]["object_scales"][()])
+            all_camera_poses.append(f["test"]["camera_poses"][()])
+            all_camera_intrinsics.append(f["test"]["camera_intrinsics"][()])
 
     # converting to numpy
     print("Converting to numpy...")
-    train_images = np.concatenate(train_images, axis=0)
-    train_pixel_coordinates = np.concatenate(train_pixel_coordinates, axis=0)
-    train_object_poses = np.concatenate(train_object_poses, axis=0)
-    train_object_scales = np.concatenate(train_object_scales, axis=0)
-    train_camera_poses = np.concatenate(train_camera_poses, axis=0)
-    train_camera_intrinsics = np.concatenate(train_camera_intrinsics, axis=0)
-    train_image_filenames = list(itertools.chain(*train_image_filenames))
+    all_images = np.concatenate(all_images, axis=0)
+    all_pixel_coordinates = np.concatenate(all_pixel_coordinates, axis=0)
+    all_object_poses = np.concatenate(all_object_poses, axis=0)
+    all_object_scales = np.concatenate(all_object_scales, axis=0)
+    all_camera_poses = np.concatenate(all_camera_poses, axis=0)
+    all_camera_intrinsics = np.concatenate(all_camera_intrinsics, axis=0)
 
-    test_images = np.concatenate(test_images, axis=0)
-    test_pixel_coordinates = np.concatenate(test_pixel_coordinates, axis=0)
-    test_object_poses = np.concatenate(test_object_poses, axis=0)
-    test_object_scales = np.concatenate(test_object_scales, axis=0)
-    test_camera_poses = np.concatenate(test_camera_poses, axis=0)
-    test_camera_intrinsics = np.concatenate(test_camera_intrinsics, axis=0)
-    test_image_filenames = list(itertools.chain(*test_image_filenames))
+    # splitting data by random sampling
+    print("Splitting data...")
+    num_train = int(new_train_frac * len(all_images))
+    indices = np.random.permutation(len(all_images))
+    train_indices = indices[:num_train]
+    test_indices = indices[num_train:]
+
+    train_images = all_images[train_indices]
+    train_pixel_coordinates = all_pixel_coordinates[train_indices]
+    train_object_poses = all_object_poses[train_indices]
+    train_object_scales = all_object_scales[train_indices]
+    train_camera_poses = all_camera_poses[train_indices]
+    train_camera_intrinsics = all_camera_intrinsics[train_indices]
+
+    test_images = all_images[test_indices]
+    test_pixel_coordinates = all_pixel_coordinates[test_indices]
+    test_object_poses = all_object_poses[test_indices]
+    test_object_scales = all_object_scales[test_indices]
+    test_camera_poses = all_camera_poses[test_indices]
+    test_camera_intrinsics = all_camera_intrinsics[test_indices]
 
     # resaving images under a new directory
     if not os.path.exists(output_dir):
@@ -188,6 +190,7 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty_aggregated/mjc_data.hdf5",
         f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5",
         f"{ROOT}/data/qwerty_aggregated3/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty_aggregated4/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged"
     merge(hdf5_list, output_dir)
