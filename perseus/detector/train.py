@@ -31,13 +31,13 @@ class TrainConfig:
     """Configuration for training."""
 
     # The batch size.
-    batch_size: int = 64
+    batch_size: int = 128
 
     # The (initial) learning rate set in the optimizer.
     learning_rate: float = 1e-3
 
     # The number of epochs to train for.
-    n_epochs: int = 100
+    n_epochs: int = 1000
 
     # The device to train on.
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,7 +46,7 @@ class TrainConfig:
     num_workers: int = -1
 
     # The output type of the model.
-    output_type: str = "yolo"  # options: gaussian, regression, yolo
+    output_type: str = "regression"  # options: gaussian, regression, yolo
 
     # Training schedule.
     val_epochs: int = 1
