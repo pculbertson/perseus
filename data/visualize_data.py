@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 from perseus import ROOT
 
 
-def main(hdf5_path: Union[str, Path]) -> None:
+def main(hdf5_path: Union[str, Path], mode: str = "images") -> None:
     """Main function."""
+    assert mode in ["images", "depth_images", "segmentation_images"], f"Invalid mode: {mode}"
     num_keypoints = 8
     keypoint_colormap = plt.cm.get_cmap("tab10", num_keypoints)
 
@@ -40,4 +41,6 @@ def main(hdf5_path: Union[str, Path]) -> None:
 
 if __name__ == "__main__":
     hdf5_path = Path(f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5")
-    main(hdf5_path)
+    # main(hdf5_path, mode="images")
+    main(hdf5_path, mode="depth_images")
+    # main(hdf5_path, mode="segmentation_images")

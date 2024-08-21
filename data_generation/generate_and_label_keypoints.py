@@ -26,7 +26,7 @@ parser.add_argument(
     "--train-frac",
     type=float,
     help="Fraction of data to use for training. Default: 0.8.",
-    default=0.8,
+    default=0.95,
 )
 
 parser.add_argument(
@@ -128,14 +128,46 @@ def generate_data(args: dict) -> tuple:
         # Append the image to the list
         rgb_images.append(np.array(image))
 
+    # Load all depth images in job dir.
+    depth_filenames = [os.path.join(args.job_dir, args.job_id, f"depth_{ii:05d}.tiff") for ii in range(24)]
+
+    # Create an empty list to store the depth images
+    depth_images = []
+
+    # Iterate over each depth image filename
+    for filename in depth_filenames:
+        # Read the image using OpenCV
+        image = Image.open(filename)
+
+        # Append the image to the list
+        depth_images.append(np.array(image))
+
+    # Load all segmentation images in job dir.
+    segmentation_filenames = [os.path.join(args.job_dir, args.job_id, f"segmentation_{ii:05d}.png") for ii in range(24)]
+
+    # Create an empty list to store the segmentation images
+    segmentation_images = []
+
+    # Iterate over each segmentation image filename
+    for filename in segmentation_filenames:
+        # Read the image using OpenCV
+        image = Image.open(filename)
+
+        # Append the image to the list
+        segmentation_images.append(np.array(image))
+
     return (
         rgb_images,
+        depth_images,
+        segmentation_images,
         pixel_coordinates.cpu().numpy(),
         object_poses.data.cpu().numpy(),
         object_scales,
         camera_poses,
         camera_intrinsics,
         rgb_filenames,
+        depth_filenames,
+        segmentation_filenames,
     )
 
 
@@ -203,45 +235,61 @@ def main(args: dict) -> None:  # noqa: PLR0915
         print(aa.job_id)
 
     image_list = []
+    depth_image_list = []
+    segmentation_image_list = []
     pixel_coords_list = []
     obj_poses_list = []
     obj_scales_list = []
     camera_poses_list = []
     camera_intrinsics_list = []
     image_filename_list = []
+    depth_filename_list = []
+    segmentation_filename_list = []
 
     # Wrap for loop in tqdm
     for aa in tqdm(args_list):
         try:
             (
                 images,
+                depth_images,
+                segmentation_images,
                 pixel_coords,
                 obj_poses,
                 obj_scales,
                 camera_poses,
                 camera_intrinsics,
                 image_filenames,
+                depth_filenames,
+                segmentation_filenames,
             ) = generate_data(aa)
         except Exception as e:
             print(f"Failed to generate data for job {aa.job_id}.")
             print(e)
             continue
         image_list.append(np.stack(images))
+        depth_image_list.append(np.stack(depth_images))
+        segmentation_image_list.append(np.stack(segmentation_images))
         pixel_coords_list.append(np.stack(pixel_coords))
         obj_poses_list.append(np.stack(obj_poses))
         obj_scales_list.append(np.stack(obj_scales))
         camera_poses_list.append(np.stack(camera_poses))
         camera_intrinsics_list.append(np.stack(camera_intrinsics))
         image_filename_list.append(np.stack(image_filenames))
+        depth_filename_list.append(np.stack(depth_filenames))
+        segmentation_filename_list.append(np.stack(segmentation_filenames))
 
     # Concatenate data and cast to torch.
     image_list = np.stack(image_list, axis=0)
+    depth_image_list = np.stack(depth_image_list, axis=0)
+    segmentation_image_list = np.stack(segmentation_image_list, axis=0)
     pixel_coords_list = np.stack(pixel_coords_list, axis=0)
     obj_poses_list = np.stack(obj_poses_list, axis=0)
     obj_scales_list = np.stack(obj_scales_list, axis=0)
     camera_poses_list = np.stack(camera_poses_list, axis=0)
     camera_intrinsics_list = np.stack(camera_intrinsics_list, axis=0)
     image_filename_list = np.stack(image_filename_list, axis=0).astype("S")
+    depth_filename_list = np.stack(depth_filename_list, axis=0).astype("S")
+    segmentation_filename_list = np.stack(segmentation_filename_list, axis=0).astype("S")
 
     # Save data as hdf5 file.
     split_idx = int(image_list.shape[0] * args.train_frac)
@@ -251,6 +299,11 @@ def main(args: dict) -> None:  # noqa: PLR0915
         # Store training data.
         train = f.create_group("train")
         train.create_dataset("images", data=torch.from_numpy(image_list[:split_idx]))
+        train.create_dataset("depth_images", data=torch.from_numpy(depth_image_list[:split_idx]))
+        train.create_dataset(
+            "segmentation_images",
+            data=torch.from_numpy(segmentation_image_list[:split_idx]),
+        )
         train.create_dataset(
             "pixel_coordinates",
             data=torch.from_numpy(pixel_coords_list[:split_idx]),
@@ -263,10 +316,20 @@ def main(args: dict) -> None:  # noqa: PLR0915
             data=torch.from_numpy(camera_intrinsics_list[:split_idx]),
         )
         train.create_dataset("image_filenames", data=image_filename_list[:split_idx])
+        train.create_dataset("depth_filenames", data=depth_filename_list[:split_idx])
+        train.create_dataset(
+            "segmentation_filenames",
+            data=segmentation_filename_list[:split_idx],
+        )
 
         # Store test data.
         test = f.create_group("test")
         test.create_dataset("images", data=torch.from_numpy(image_list[split_idx:]))
+        test.create_dataset("depth_images", data=torch.from_numpy(depth_image_list[split_idx:]))
+        test.create_dataset(
+            "segmentation_images",
+            data=torch.from_numpy(segmentation_image_list[split_idx:]),
+        )
         test.create_dataset(
             "pixel_coordinates",
             data=torch.from_numpy(pixel_coords_list[split_idx:]),
@@ -279,6 +342,11 @@ def main(args: dict) -> None:  # noqa: PLR0915
             data=torch.from_numpy(camera_intrinsics_list[split_idx:]),
         )
         test.create_dataset("image_filenames", data=image_filename_list[split_idx:])
+        test.create_dataset("depth_filenames", data=depth_filename_list[split_idx:])
+        test.create_dataset(
+            "segmentation_filenames",
+            data=segmentation_filename_list[split_idx:],
+        )
 
         # Store hyperparameters.
         f.attrs["num_keypoints"] = args.num_keypoints

@@ -24,7 +24,7 @@ def save_image(image_data: tuple) -> str:
     return local_path
 
 
-def save_images_in_parallel(images: list, output_dir: str, mode: str, start_index: int) -> list:
+def save_images_in_parallel(images: list, output_dir: str, mode: str, start_index: int, ext: str = "png") -> list:
     """Save images in parallel.
 
     Args:
@@ -32,6 +32,7 @@ def save_images_in_parallel(images: list, output_dir: str, mode: str, start_inde
         output_dir: directory to save the images.
         mode: train or test.
         start_index: starting index for the image filenames.
+        ext: image extension.
 
     Returns:
         filenames: list of saved image filenames.
@@ -42,8 +43,8 @@ def save_images_in_parallel(images: list, output_dir: str, mode: str, start_inde
 
     for img_batch in images:
         for image in img_batch:
-            save_path = f"{output_dir}/images/{mode}/img{i:08d}.png"
-            local_path = f"images/{mode}/img{i:08d}.png"
+            save_path = f"{output_dir}/images/{mode}/img{i:08d}.{ext}"
+            local_path = f"images/{mode}/img{i:08d}.{ext}"
             image_data.append((image, save_path, local_path))
             i += 1
 
@@ -73,6 +74,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
 
     # all data
     all_images = []
+    all_depth_images = []
+    all_segmentation_images = []
     all_pixel_coordinates = []
     all_object_poses = []
     all_object_scales = []
@@ -98,6 +101,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
 
             # train data
             all_images.append(f["train"]["images"][()])
+            all_depth_images.append(f["train"]["depth_images"][()])
+            all_segmentation_images.append(f["train"]["segmentation_images"][()])
             all_pixel_coordinates.append(f["train"]["pixel_coordinates"][()])
             all_object_poses.append(f["train"]["object_poses"][()])
             all_object_scales.append(f["train"]["object_scales"][()])
@@ -106,6 +111,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
 
             # test data
             all_images.append(f["test"]["images"][()])
+            all_depth_images.append(f["test"]["depth_images"][()])
+            all_segmentation_images.append(f["test"]["segmentation_images"][()])
             all_pixel_coordinates.append(f["test"]["pixel_coordinates"][()])
             all_object_poses.append(f["test"]["object_poses"][()])
             all_object_scales.append(f["test"]["object_scales"][()])
@@ -115,6 +122,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     # converting to numpy
     print("Converting to numpy...")
     all_images = np.concatenate(all_images, axis=0)
+    all_depth_images = np.concatenate(all_depth_images, axis=0)
+    all_segmentation_images = np.concatenate(all_segmentation_images, axis=0)
     all_pixel_coordinates = np.concatenate(all_pixel_coordinates, axis=0)
     all_object_poses = np.concatenate(all_object_poses, axis=0)
     all_object_scales = np.concatenate(all_object_scales, axis=0)
@@ -129,6 +138,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     test_indices = indices[num_train:]
 
     train_images = all_images[train_indices]
+    train_depth_images = all_depth_images[train_indices]
+    train_segmentation_images = all_segmentation_images[train_indices]
     train_pixel_coordinates = all_pixel_coordinates[train_indices]
     train_object_poses = all_object_poses[train_indices]
     train_object_scales = all_object_scales[train_indices]
@@ -136,6 +147,8 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     train_camera_intrinsics = all_camera_intrinsics[train_indices]
 
     test_images = all_images[test_indices]
+    test_depth_images = all_depth_images[test_indices]
+    test_segmentation_images = all_segmentation_images[test_indices]
     test_pixel_coordinates = all_pixel_coordinates[test_indices]
     test_object_poses = all_object_poses[test_indices]
     test_object_scales = all_object_scales[test_indices]
@@ -147,6 +160,10 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
         os.makedirs(output_dir)
         os.makedirs(f"{output_dir}/images/train")
         os.makedirs(f"{output_dir}/images/test")
+        os.makedirs(f"{output_dir}/depth_images/train")
+        os.makedirs(f"{output_dir}/depth_images/test")
+        os.makedirs(f"{output_dir}/segmentation_images/train")
+        os.makedirs(f"{output_dir}/segmentation_images/test")
     else:
         raise ValueError(
             f"Directory {output_dir} already exists! For safety, please manually remove it or choose a new directory."
@@ -154,6 +171,16 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
 
     train_image_filenames = save_images_in_parallel(train_images, output_dir.split("/")[-1], "train", 0)
     test_image_filenames = save_images_in_parallel(test_images, output_dir.split("/")[-1], "test", 0)
+    train_depth_filenames = save_images_in_parallel(
+        train_depth_images, output_dir.split("/")[-1], "train", 0, ext="tiff"
+    )
+    test_depth_filenames = save_images_in_parallel(test_depth_images, output_dir.split("/")[-1], "test", 0, ext="tiff")
+    train_segmentation_filenames = save_images_in_parallel(
+        train_segmentation_images, output_dir.split("/")[-1], "train", 0
+    )
+    test_segmentation_filenames = save_images_in_parallel(
+        test_segmentation_images, output_dir.split("/")[-1], "test", 0
+    )
 
     # creating new dataset
     print("Creating new dataset...")
@@ -167,12 +194,16 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
         # train data
         train = f.create_group("train")
         train.create_dataset("images", data=train_images)
+        train.create_dataset("depth_images", data=train_depth_images)
+        train.create_dataset("segmentation_images", data=train_segmentation_images)
         train.create_dataset("pixel_coordinates", data=train_pixel_coordinates)
         train.create_dataset("object_poses", data=train_object_poses)
         train.create_dataset("object_scales", data=train_object_scales)
         train.create_dataset("camera_poses", data=train_camera_poses)
         train.create_dataset("camera_intrinsics", data=train_camera_intrinsics)
         train.create_dataset("image_filenames", data=train_image_filenames)
+        train.create_dataset("depth_filenames", data=train_depth_filenames)
+        train.create_dataset("segmentation_filenames", data=train_segmentation_filenames)
 
         # test data
         test = f.create_group("test")
@@ -183,14 +214,17 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
         test.create_dataset("camera_poses", data=test_camera_poses)
         test.create_dataset("camera_intrinsics", data=test_camera_intrinsics)
         test.create_dataset("image_filenames", data=test_image_filenames)
+        test.create_dataset("depth_filenames", data=test_depth_filenames)
+        test.create_dataset("segmentation_filenames", data=test_segmentation_filenames)
 
 
 if __name__ == "__main__":
     hdf5_list = [
-        f"{ROOT}/data/qwerty_aggregated/mjc_data.hdf5",
-        f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5",
-        f"{ROOT}/data/qwerty_aggregated3/mjc_data.hdf5",
-        f"{ROOT}/data/qwerty_aggregated4/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty1/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty2/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty3/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty4/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty5/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged"
     merge(hdf5_list, output_dir)
