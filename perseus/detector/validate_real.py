@@ -1,46 +1,56 @@
 """Modified validation script that uses real data (without GT pose labels)."""
 
-import tyro
 from dataclasses import dataclass
-import torch
-from perseus.detector.models import KeypointCNN, KeypointGaussian
-from perseus.detector.data import (
-    KeypointDataset,
-    KeypointDatasetConfig,
-    AugmentationConfig,
-    KeypointAugmentation,
-)
+
 import matplotlib
+import torch
+import tyro
+
+from perseus.detector.data import KeypointDatasetConfig
+from perseus.detector.models import KeypointCNN, KeypointGaussian
 
 matplotlib.use("Agg")
-from matplotlib import pyplot as plt
-import numpy as np
-from matplotlib.patches import Ellipse
 from pathlib import Path
-from PIL import Image
-from torchvision.transforms import Resize, CenterCrop
-import torchvision.transforms.functional as TF
+
 import kornia
+import numpy as np
+from matplotlib import pyplot as plt
+from PIL import Image
+
+from perseus import ROOT
 
 
 @dataclass(frozen=True)
 class ValConfig:
-    model_path: Path = Path("outputs/models/fbz72ad3.pth")
+    """Validation configuration."""
+
+    # model_path: Path = Path(f"{ROOT}/outputs/models/xd5ccyzs.pth")
+    # model_path: Path = Path(f"{ROOT}/outputs/models/js2al4fl.pth")
+    model_path: Path = Path(f"{ROOT}/outputs/models/ibkvjlvb.pth")
     dataset_cfg: KeypointDatasetConfig = KeypointDatasetConfig(
-        dataset_path="data/zed1",
+        dataset_path=f"{ROOT}/data/real_imgs",
     )
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     output_type: str = "regression"
     save_every: int = 1
 
 
-def validate(cfg: ValConfig):
+def validate(cfg: ValConfig) -> None:  # noqa: PLR0912, PLR0915
+    """Validate the model on the real dataset."""
+    # create output dirs
+    ckpt_name = str(cfg.model_path).split("/")[-1].split(".")[0]
+    Path(f"{ROOT}/outputs/figures/{ckpt_name}").mkdir(parents=True, exist_ok=True)
+
     # Load model.
     if cfg.output_type == "gaussian":
         model = KeypointGaussian()
     else:
         model = KeypointCNN()
-    model.load_state_dict(torch.load(str(cfg.model_path)))
+    state_dict = torch.load(str(cfg.model_path))
+    for key in list(state_dict.keys()):
+        if "module." in key:
+            state_dict[key.replace("module.", "")] = state_dict.pop(key)
+    model.load_state_dict(state_dict)
     model.eval()
 
     model.to(cfg.device)
@@ -73,11 +83,9 @@ def validate(cfg: ValConfig):
             if cfg.output_type == "gaussian":
                 mu, L = model(image)
                 predicted_pixel_coordinates = mu.reshape(1, -1, 2).detach()
-                predicted_pixel_vars = (
-                    torch.diagonal(L @ L.transpose(-1, -2), dim1=1, dim2=2)
-                    .reshape(1, -1, 2)
-                    .detach()
-                )
+                # predicted_pixel_vars = (
+                #     torch.diagonal(L @ L.transpose(-1, -2), dim1=1, dim2=2).reshape(1, -1, 2).detach()
+                # )  # unused for now
             else:
                 predicted_pixel_coordinates = model(image).reshape(1, -1, 2).detach()
 
@@ -112,16 +120,11 @@ def validate(cfg: ValConfig):
                     )
 
                     # Compute angle of rotation.
-                    theta = (
-                        torch.atan2(eig_vecs[1, 0], eig_vecs[0, 0])
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
+                    theta = torch.atan2(eig_vecs[1, 0], eig_vecs[0, 0]).detach().cpu().numpy()  # noqa: F841
 
                     # Compute width and height of ellipse.
-                    width = 2 * torch.sqrt(eig_vals[0]).detach().cpu().numpy()
-                    height = 2 * torch.sqrt(eig_vals[1]).detach().cpu().numpy()
+                    width = 2 * torch.sqrt(eig_vals[0]).detach().cpu().numpy()  # noqa: F841
+                    height = 2 * torch.sqrt(eig_vals[1]).detach().cpu().numpy()  # noqa: F841
 
                     # Plot ellipse.
                     # ellipse = Ellipse(
@@ -146,12 +149,12 @@ def validate(cfg: ValConfig):
             ax.set_title(f"Image {ii} / {len(image_files)}")
 
             # Save figure as png.
-            plt.savefig(f"outputs/figures/val_{ii}.png")
+            plt.savefig(f"{ROOT}/outputs/figures/{ckpt_name}/val_{ii}.png")
 
     # Create gif from images.
     import imageio.v3 as imageio
 
-    output_path = Path("outputs/figures")
+    output_path = Path(f"{ROOT}/outputs/figures/{ckpt_name}")
 
     # Sort image files (without leading zeros).
     image_files = sorted(
@@ -159,9 +162,9 @@ def validate(cfg: ValConfig):
         key=lambda x: int(x.stem.split("val_")[-1]),
     )
 
-    images = [imageio.imread(imfile) for imfile in image_files]
+    # images = [imageio.imread(imfile) for imfile in image_files]
     frames = np.stack([imageio.imread(imfile) for imfile in image_files], axis=0)
-    imageio.imwrite("outputs/figures/val.gif", frames, loop=0, fps=5)
+    imageio.imwrite(f"{ROOT}/outputs/figures/{ckpt_name}/val.gif", frames, loop=0, fps=5)
 
 
 if __name__ == "__main__":
