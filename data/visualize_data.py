@@ -21,9 +21,9 @@ def main(hdf5_path: Union[str, Path], mode: str = "images") -> None:
         print(f"Min pixel coordinates: {min_pixel_coordinates}")
 
         # visualizing the training data
-        for i in range(len(f["train"]["images"])):
+        for i in range(len(f["train"][f"{mode}"])):
             print(f"Image {i}")
-            images = f["train"]["images"][i]
+            images = f["train"][f"{mode}"][i]
             keypoints_all = f["train"]["pixel_coordinates"][i]
 
             for j in range(len(images)):
@@ -35,12 +35,14 @@ def main(hdf5_path: Union[str, Path], mode: str = "images") -> None:
                 plt.imshow(image)
                 for k in range(len(keypoints)):
                     plt.scatter(keypoints[k, 0], keypoints[k, 1], color=keypoint_colormap(k), marker="o")
-                plt.title(f"Image {i}/{len(f['train']['images'])} | Frame {j}/{len(images)}")
+                plt.title(f"Image {i}/{len(f['train'][f'{mode}'])} | Frame {j}/{len(images)}")
                 plt.show()
 
 
 if __name__ == "__main__":
-    hdf5_path = Path(f"{ROOT}/data/qwerty_aggregated2/mjc_data.hdf5")
-    # main(hdf5_path, mode="images")
-    main(hdf5_path, mode="depth_images")
+    hdf5_path = Path(f"{ROOT}/data/merged/merged.hdf5")
+
+    # uncomment the one you want to see
+    main(hdf5_path, mode="images")
+    # main(hdf5_path, mode="depth_images")
     # main(hdf5_path, mode="segmentation_images")
