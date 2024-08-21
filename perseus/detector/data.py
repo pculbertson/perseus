@@ -92,10 +92,15 @@ class KeypointDataset(Dataset):
             self.pixel_coordinates = torch.from_numpy(dataset["pixel_coordinates"][()])
             self.object_poses = pp.SE3(torch.from_numpy(dataset["object_poses"][()]))
             self.images = dataset["images"][()][..., :3]
+            self.depth_images = dataset["depth_images"][()]
+            self.segmentation_images = dataset["segmentation_images"][()]
+            self.asset_ids = dataset["asset_ids"][()]
             self.object_scales = torch.from_numpy(dataset["object_scales"][()])
             self.camera_poses = pp.SE3(dataset["camera_poses"][()])
             self.camera_intrinsics = torch.from_numpy(dataset["camera_intrinsics"][()])
             self.image_filenames = dataset["image_filenames"][()]
+            self.depth_filenames = dataset["depth_filenames"][()]
+            self.segmentation_filenames = dataset["segmentation_filenames"][()]
 
             # print(f"Images shape: {self.images.shape}")
 
@@ -119,16 +124,29 @@ class KeypointDataset(Dataset):
         image_idx = idx % self.images_per_trajectory
 
         image = kornia.utils.image_to_tensor(self.images[traj_idx][image_idx]) / 255.0
+        depth_image = kornia.utils.image_to_tensor(self.depth_images[traj_idx][image_idx])
+
+        # the segmentation image is a binary mask of the cube
+        original_seg_image = self.segmentation_images[traj_idx][image_idx]
+        asset_id = self.asset_ids[traj_idx][image_idx]
+        segmentation_image = torch.zeros_like(original_seg_image)
+        segmentation_image[original_seg_image == asset_id] = 1.0
+        segmentation_image = kornia.utils.image_to_tensor(segmentation_image)
+
         pixel_coordinates = self.pixel_coordinates[traj_idx][image_idx]
 
         return {
             "image": image,
+            "depth_image": depth_image,
+            "segmentation_image": segmentation_image,
             "pixel_coordinates": pixel_coordinates,
             "object_pose": self.object_poses[traj_idx][image_idx],
             "camera_pose": self.camera_poses[traj_idx][image_idx],
             "object_scale": self.object_scales[traj_idx][image_idx],
             "camera_intrinsics": self.camera_intrinsics[traj_idx][image_idx],
             "image_filename": self.image_filenames[traj_idx][image_idx],
+            "depth_filename": self.depth_filenames[traj_idx][image_idx],
+            "segmentation_filename": self.segmentation_filenames[traj_idx][image_idx],
         }
 
     def get_trajectory(self, idx: int) -> dict:

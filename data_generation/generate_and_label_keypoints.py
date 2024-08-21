@@ -80,8 +80,12 @@ def generate_data(args: dict) -> tuple:
     """Generate data for a given job."""
     # Load job metadata.
     metadata_filename = os.path.join(args.job_dir, args.job_id, "metadata.json")
+    asset_id = None
     with open(metadata_filename, "r") as f:
         metadata = json.load(f)
+        for i, instance in enumerate(metadata["instances"]):
+            if instance["asset_id"] == "mjc":
+                asset_id = i
 
     # Get camera intrinsics and extrinsics.
     fov = metadata["camera"]["field_of_view"]
@@ -147,6 +151,7 @@ def generate_data(args: dict) -> tuple:
 
     # Create an empty list to store the segmentation images
     segmentation_images = []
+    asset_ids = np.array([asset_id] * 24)
 
     # Iterate over each segmentation image filename
     for filename in segmentation_filenames:
@@ -168,6 +173,7 @@ def generate_data(args: dict) -> tuple:
         rgb_filenames,
         depth_filenames,
         segmentation_filenames,
+        asset_ids,
     )
 
 
@@ -245,6 +251,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
     image_filename_list = []
     depth_filename_list = []
     segmentation_filename_list = []
+    asset_id_list = []
 
     # Wrap for loop in tqdm
     for aa in tqdm(args_list):
@@ -261,6 +268,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
                 image_filenames,
                 depth_filenames,
                 segmentation_filenames,
+                asset_ids,
             ) = generate_data(aa)
         except Exception as e:
             print(f"Failed to generate data for job {aa.job_id}.")
@@ -277,6 +285,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
         image_filename_list.append(np.stack(image_filenames))
         depth_filename_list.append(np.stack(depth_filenames))
         segmentation_filename_list.append(np.stack(segmentation_filenames))
+        asset_id_list.append(np.stack(asset_ids))
 
     # Concatenate data and cast to torch.
     image_list = np.stack(image_list, axis=0)
@@ -290,6 +299,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
     image_filename_list = np.stack(image_filename_list, axis=0).astype("S")
     depth_filename_list = np.stack(depth_filename_list, axis=0).astype("S")
     segmentation_filename_list = np.stack(segmentation_filename_list, axis=0).astype("S")
+    asset_id_list = np.stack(asset_id_list, axis=0)
 
     # Save data as hdf5 file.
     split_idx = int(image_list.shape[0] * args.train_frac)
@@ -321,6 +331,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
             "segmentation_filenames",
             data=segmentation_filename_list[:split_idx],
         )
+        train.create_dataset("asset_ids", data=asset_id_list[:split_idx])
 
         # Store test data.
         test = f.create_group("test")
@@ -347,6 +358,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
             "segmentation_filenames",
             data=segmentation_filename_list[split_idx:],
         )
+        test.create_dataset("asset_ids", data=asset_id_list[split_idx:])
 
         # Store hyperparameters.
         f.attrs["num_keypoints"] = args.num_keypoints
