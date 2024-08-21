@@ -37,7 +37,7 @@ class TrainConfig:
     learning_rate: float = 1e-3
 
     # The number of epochs to train for.
-    n_epochs: int = 1000
+    n_epochs: int = 100
 
     # The device to train on.
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
