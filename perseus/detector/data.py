@@ -49,7 +49,7 @@ class AugmentationConfig:
 class KeypointDatasetConfig:
     """Configuration for the keypoint dataset."""
 
-    dataset_path: str = "data/qwerty_aggregated/mjc_data.hdf5"
+    dataset_path: str = "data/merged/merged.hdf5"
 
 
 @dataclass(frozen=True)
