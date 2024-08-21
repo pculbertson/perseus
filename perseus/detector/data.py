@@ -1,6 +1,8 @@
+import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+import cv2
 import h5py
 import kornia
 import numpy as np
@@ -264,6 +266,8 @@ class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
         transforms: Optional[List[AbstractKeypointTransform]] = None,
         train: bool = True,
         size: Optional[int] = None,
+        lazy: bool = True,
+        dataset_root: str | None = None,
     ) -> None:
         """Initialize the dataset.
 
@@ -273,7 +277,9 @@ class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
             data_dir: The directory containing the hdf5 dataset.
             transforms: The transforms to apply to the dataset.
             train: Whether to load the training or test set.
-            size: The number of samples
+            size: The number of samples.
+            lazy: Whether to load the dataset lazily.
+            dataset_root: The root directory of the dataset (only used for lazy loading).
         """
         self.edge_links = [
             [0, 1],
@@ -320,6 +326,8 @@ class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
             edge_colors=self.edge_colors,
             keypoint_colors=self.keypoint_colors,
         )
+        self.lazy = lazy
+        self.dataset_root = dataset_root
 
         with h5py.File(data_dir, "r") as f:
             if train:
@@ -327,9 +335,13 @@ class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
             else:
                 dataset = f["test"]
 
-            _images = dataset["images"][()]  # (num_videos, num_frames_per_video, H, W, 3)
-            self.images = _images.reshape(-1, *_images.shape[-3:])  # (num_images, H, W, 3)
-            self.const_mask = np.ones(self.images.shape[-3:-1])  # (H, W, 3)
+            if self.lazy:
+                self.image_filenames = dataset["image_filenames"][()]
+                self.const_mask = np.ones(dataset["images"][0].shape[-3:-1])  # (H, W, 3)
+            else:
+                _images = dataset["images"][()]  # (num_videos, num_frames_per_video, H, W, 3)
+                self.images = _images.reshape(-1, *_images.shape[-3:])  # (num_images, H, W, 3)
+                self.const_mask = np.ones(self.images.shape[-3:-1])  # (H, W, 3)
             _joints = dataset["pixel_coordinates"][()]
             joints = _joints.reshape(-1, *_joints.shape[-2:])  # (num_images, 8, 2)
             self.joints = np.concatenate(
@@ -350,12 +362,23 @@ class KeypointDatasetYoloNas(AbstractPoseEstimationDataset):
 
     def __len__(self) -> int:
         """The number of images in the dataset."""
-        return len(self.images)
+        if self.lazy:
+            return len(self.image_filenames)
+        else:
+            return len(self.images)
 
     def load_sample(self, index: int) -> PoseEstimationSample:
         """Load a sample from the dataset."""
+        if self.lazy:
+            if self.dataset_root is not None:
+                img_path = os.path.join(self.dataset_root, self.image_filenames[index].decode("utf-8"))
+            else:
+                img_path = self.image_filenames[index].decode("utf-8")
+            image = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        else:
+            image = self.images[index]
         return PoseEstimationSample(
-            image=self.images[index],
+            image=image,
             mask=self.const_mask,
             joints=self.joints[index][None, ...],
             areas=None,

@@ -15,19 +15,21 @@ from super_gradients.training.transforms.keypoints import (
     KeypointsImageStandardize,
 )
 from super_gradients.training.utils.callbacks import ExtremeBatchPoseEstimationVisualizationCallback, Phase
-
-# from super_gradients.training.utils.distributed_training_utils import setup_device
+from super_gradients.training.utils.distributed_training_utils import setup_device
 from super_gradients.training.utils.early_stopping import EarlyStop
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm
 
 from perseus import ROOT
 from perseus.detector.data import KeypointDatasetYoloNas
 
-# setup_device(num_gpus=torch.cuda.device_count())  # TODO(ahl): debug why this is broken
 
-
-def train() -> str:
+def train(multigpu: bool = True) -> str:
     """Train the YOLO NAS Pose model."""
+    if multigpu:
+        setup_device(num_gpus=torch.cuda.device_count())
+
     # transforms
     keypoints_hsv = KeypointsHSV(prob=0.5, hgain=20, sgain=20, vgain=20)
     keypoints_brightness_contrast = KeypointsBrightnessContrast(
@@ -45,38 +47,37 @@ def train() -> str:
 
     # datasets
     train_dataset = KeypointDatasetYoloNas(
-        data_dir=f"{ROOT}/data/merged.hdf5",
+        data_dir=f"{ROOT}/data/merged/merged.hdf5",
         transforms=train_transforms,
         train=True,
-        # size=1024,  # [DEBUG]
+        lazy=True,
+        dataset_root=f"{ROOT}/data/merged",
     )
     val_dataset = KeypointDatasetYoloNas(
-        data_dir=f"{ROOT}/data/merged.hdf5",
+        data_dir=f"{ROOT}/data/merged/merged.hdf5",
         transforms=val_transforms,
         train=False,
-        # size=1024,  # [DEBUG]
+        lazy=True,
+        dataset_root=f"{ROOT}/data/merged",
     )
     print("Created datasets!")
 
-    # dataloaders
-    train_dataloader_params = {
-        "shuffle": True,
-        "batch_size": 512,
-        "drop_last": True,
-        "pin_memory": True,
-        "num_workers": 4,
-        "collate_fn": YoloNASPoseCollateFN(),
-    }
-    train_dataloader = DataLoader(train_dataset, **train_dataloader_params)
-    val_dataloader_params = {
-        "shuffle": True,
-        "batch_size": 512,
-        "drop_last": True,
-        "pin_memory": True,
-        "num_workers": 4,
-        "collate_fn": YoloNASPoseCollateFN(),
-    }
-    val_dataloader = DataLoader(val_dataset, **val_dataloader_params)
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=512,
+        sampler=DistributedSampler(train_dataset, shuffle=True),
+        num_workers=4,
+        collate_fn=YoloNASPoseCollateFN(),
+        pin_memory=True,
+    )
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=512,
+        sampler=DistributedSampler(val_dataset, shuffle=False),
+        num_workers=4,
+        collate_fn=YoloNASPoseCollateFN(),
+        pin_memory=True,
+    )
     print("Created dataloaders!")
 
     # model
@@ -120,7 +121,7 @@ def train() -> str:
         "warmup_mode": "LinearBatchLRWarmup",
         "warmup_initial_lr": 1e-8,
         "lr_warmup_epochs": 2,
-        "initial_lr": 5e-4,
+        "initial_lr": 5e-4,  # TODO(ahl): increase this?
         "lr_mode": "cosine",
         "cosine_final_lr_ratio": 0.05,
         "max_epochs": 100,
@@ -131,12 +132,12 @@ def train() -> str:
         "loss": "yolo_nas_pose_loss",
         "criterion_params": {
             "oks_sigmas": [0.07] * 8,
-            "classification_loss_weight": 1.0,
+            "classification_loss_weight": 0.0,  # we don't care about classification
             "classification_loss_type": "focal",
             "regression_iou_loss_type": "ciou",
             "iou_loss_weight": 2.5,
             "dfl_loss_weight": 0.01,
-            "pose_cls_loss_weight": 1.0,
+            "pose_cls_loss_weight": 0.0,  # we don't care about classification
             "pose_reg_loss_weight": 34.0,
             "pose_classification_loss_type": "focal",
             "rescale_pose_loss_with_assigned_score": True,
@@ -168,7 +169,7 @@ def train() -> str:
     return best_model_path
 
 
-def viz(best_model_path: str) -> None:
+def viz(best_model_path: str, real: bool = True) -> None:
     """Visualize the keypoint predictions of the YOLO NAS Pose model."""
     # read the image and load it as a torch tensor
     best_model = models.get(
@@ -176,37 +177,54 @@ def viz(best_model_path: str) -> None:
         num_classes=8,
         checkpoint_path=best_model_path,
     )
-    with open(f"{ROOT}/data/real_imgs/img0_a.png", "rb") as f:
-        image_np = Image.open(f).convert("RGB")
-        image = torch.tensor(np.array(image_np)).permute(2, 0, 1).float() / 255.0
 
-        # center crop the image to 256x256
-        h_crop = 256
-        w_crop = 256
-        image = image[
-            ...,
-            image.shape[-2] // 2 - h_crop // 2 : image.shape[-2] // 2 + h_crop // 2,
-            image.shape[-1] // 2 - w_crop // 2 : image.shape[-1] // 2 + w_crop // 2,
-        ]
+    # loop through every image in {ROOT}/data/sim_imgs
+    if real:
+        path = f"{ROOT}/data/real_imgs"
+    else:
+        path = f"{ROOT}/data/sim_imgs"
+    imgs = os.listdir(path)
+    for img in tqdm(imgs, desc="Visualizing keypoints", total=len(imgs)):
+        if not img.endswith(".png"):
+            continue
+        with open(f"{path}/{img}", "rb") as f:
+            image_np = Image.open(f).convert("RGB")
+            image = torch.tensor(np.array(image_np)).permute(2, 0, 1)
 
-        # visualizing keypoint predictions
-        res = best_model.predict(image, conf=0.0)
-        if len(res.prediction.poses) > 0:
-            keypoints = res.prediction.poses[0][..., :2]
-            scores = res.prediction.poses[0][..., 2]
+            # center crop the image to 256x256
+            h_crop = 256
+            w_crop = 256
+            image = image[
+                ...,
+                image.shape[-2] // 2 - h_crop // 2 : image.shape[-2] // 2 + h_crop // 2,
+                image.shape[-1] // 2 - w_crop // 2 : image.shape[-1] // 2 + w_crop // 2,
+            ]
 
-            # create a colormap based on the score (from 0 to 1)
-            cmap = plt.cm.get_cmap("viridis")
-            plt.imshow(image.permute(1, 2, 0))
-            plt.scatter(keypoints[:, 0], keypoints[:, 1], c=scores, cmap=cmap)
-            cbar = plt.colorbar()
-            cbar.set_label("Confidence")
-            plt.clim(0, 1)
-            plt.title("Keypoint predictions")
-            plt.axis("off")
-            plt.show()
+            # visualizing keypoint predictions
+            res = best_model.predict(image, conf=0.0)
+            if len(res.prediction.poses) > 0:
+                keypoints = res.prediction.poses[0][..., :2]
+                scores = res.prediction.poses[0][..., 2]
+
+                # create a colormap based on the score (from 0 to 1)
+                cmap = plt.cm.get_cmap("viridis")
+                plt.imshow(image.permute(1, 2, 0))
+                plt.scatter(keypoints[:, 0], keypoints[:, 1], c=scores, cmap=cmap)
+                cbar = plt.colorbar()
+                cbar.set_label("Confidence")
+                plt.clim(0, 1)
+                plt.title("Keypoint predictions")
+                plt.axis("off")
+                plt.savefig(f"{path}/val/{img}_keypoints.png")
+                plt.close()
+            else:
+                print("No keypoints detected!")
 
 
 if __name__ == "__main__":
     best_model_path = train()
     viz(best_model_path)
+
+    # some checkpoints
+    # ckpt = "test_ckpts/test/RUN_20240820_161300_337106/ckpt_best.pth"  # first one trained
+    # viz(ckpt, real=True)
