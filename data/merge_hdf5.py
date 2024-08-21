@@ -17,12 +17,12 @@ def save_image(image_data: tuple) -> str:
         image_data: tuple containing the image and the output path.
 
     Returns:
-        output_path: path to the saved image.
+        local_path: local path to the saved image (to be stored in hdf5).
     """
-    image, output_path = image_data
+    image, save_path, local_path = image_data
     image = Image.fromarray(image)
-    image.save(output_path)
-    return output_path
+    image.save(save_path)
+    return local_path
 
 
 def save_images_in_parallel(images: list, output_dir: str, mode: str, start_index: int) -> list:
@@ -43,8 +43,9 @@ def save_images_in_parallel(images: list, output_dir: str, mode: str, start_inde
 
     for img_batch in images:
         for image in img_batch:
-            output_path = f"{output_dir}/images/{mode}/img{i:08d}.png"
-            image_data.append((image, output_path))
+            save_path = f"{output_dir}/images/{mode}/img{i:08d}.png"
+            local_path = f"images/{mode}/img{i:08d}.png"
+            image_data.append((image, save_path, local_path))
             i += 1
 
     with ThreadPoolExecutor() as executor:
