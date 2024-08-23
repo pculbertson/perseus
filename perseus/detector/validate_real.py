@@ -24,9 +24,11 @@ from perseus import ROOT
 class ValConfig:
     """Validation configuration."""
 
+    # model_path: Path = Path(f"{ROOT}/outputs/models/ibkvjlvb.pth")
     # model_path: Path = Path(f"{ROOT}/outputs/models/xd5ccyzs.pth")
     # model_path: Path = Path(f"{ROOT}/outputs/models/js2al4fl.pth")
-    model_path: Path = Path(f"{ROOT}/outputs/models/ibkvjlvb.pth")
+    model_path: Path = Path(f"{ROOT}/outputs/models/5bkci9hx.pth")
+
     dataset_cfg: KeypointDatasetConfig = KeypointDatasetConfig(
         dataset_path=f"{ROOT}/data/real_imgs",
     )

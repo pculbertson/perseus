@@ -31,13 +31,13 @@ class TrainConfig:
     """Configuration for training."""
 
     # The batch size.
-    batch_size: int = 64
+    batch_size: int = 256
 
     # The (initial) learning rate set in the optimizer.
     learning_rate: float = 1e-3
 
     # The number of epochs to train for.
-    n_epochs: int = 100
+    n_epochs: int = 200
 
     # The device to train on.
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -161,7 +161,7 @@ def initialize_training(  # noqa: PLR0915
         val_shuffle = None
 
         # wrapping model in DDP + sending to device
-        model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=True)
+        model = DDP(model.to(device), device_ids=[rank])
 
     else:
         print("Creating dataloaders...")
@@ -180,11 +180,13 @@ def initialize_training(  # noqa: PLR0915
 
     # creating dataloaders
     num_workers = 4  # TODO(ahl): optimize this instead of using a magic number
+    prefetch_factor = 2
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=train_shuffle,
         num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
         pin_memory=True,
         sampler=train_sampler,
         multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
@@ -194,6 +196,7 @@ def initialize_training(  # noqa: PLR0915
         batch_size=cfg.batch_size,
         shuffle=val_shuffle,
         num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
         pin_memory=True,
         sampler=val_sampler,
         multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
