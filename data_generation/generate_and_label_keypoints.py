@@ -126,10 +126,7 @@ def generate_data(args: dict) -> tuple:
 
     # Iterate over each RGB image filename
     for filename in rgb_filenames:
-        # Read the image using OpenCV
         image = Image.open(filename).convert("RGB")
-
-        # Append the image to the list
         rgb_images.append(np.array(image))
 
     # Load all depth images in job dir.
@@ -140,10 +137,7 @@ def generate_data(args: dict) -> tuple:
 
     # Iterate over each depth image filename
     for filename in depth_filenames:
-        # Read the image using OpenCV
         image = Image.open(filename)
-
-        # Append the image to the list
         depth_images.append(np.array(image))
 
     # Load all segmentation images in job dir.
@@ -155,10 +149,7 @@ def generate_data(args: dict) -> tuple:
 
     # Iterate over each segmentation image filename
     for filename in segmentation_filenames:
-        # Read the image using OpenCV
         image = Image.open(filename)
-
-        # Append the image to the list
         segmentation_images.append(np.array(image))
 
     return (
