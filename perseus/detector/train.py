@@ -31,7 +31,7 @@ class TrainConfig:
     """Configuration for training."""
 
     # The batch size.
-    batch_size: int = 128
+    batch_size: int = 64
 
     # The (initial) learning rate set in the optimizer.
     learning_rate: float = 1e-3

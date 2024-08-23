@@ -129,7 +129,7 @@ class KeypointDataset(Dataset):
         # the segmentation image is a binary mask of the cube
         original_seg_image = self.segmentation_images[traj_idx][image_idx]
         asset_id = self.asset_ids[traj_idx][image_idx]
-        segmentation_image = torch.zeros_like(original_seg_image)
+        segmentation_image = np.zeros_like(original_seg_image)
         segmentation_image[original_seg_image == asset_id] = 1.0
         segmentation_image = kornia.utils.image_to_tensor(segmentation_image)
 

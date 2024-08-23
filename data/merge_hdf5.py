@@ -76,6 +76,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     all_images = []
     all_depth_images = []
     all_segmentation_images = []
+    all_asset_ids = []
     all_pixel_coordinates = []
     all_object_poses = []
     all_object_scales = []
@@ -103,6 +104,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
             all_images.append(f["train"]["images"][()])
             all_depth_images.append(f["train"]["depth_images"][()])
             all_segmentation_images.append(f["train"]["segmentation_images"][()])
+            all_asset_ids.append(f["train"]["asset_ids"][()])
             all_pixel_coordinates.append(f["train"]["pixel_coordinates"][()])
             all_object_poses.append(f["train"]["object_poses"][()])
             all_object_scales.append(f["train"]["object_scales"][()])
@@ -113,6 +115,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
             all_images.append(f["test"]["images"][()])
             all_depth_images.append(f["test"]["depth_images"][()])
             all_segmentation_images.append(f["test"]["segmentation_images"][()])
+            all_asset_ids.append(f["test"]["asset_ids"][()])
             all_pixel_coordinates.append(f["test"]["pixel_coordinates"][()])
             all_object_poses.append(f["test"]["object_poses"][()])
             all_object_scales.append(f["test"]["object_scales"][()])
@@ -124,6 +127,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     all_images = np.concatenate(all_images, axis=0)
     all_depth_images = np.concatenate(all_depth_images, axis=0)
     all_segmentation_images = np.concatenate(all_segmentation_images, axis=0)
+    all_asset_ids = np.concatenate(all_asset_ids, axis=0)
     all_pixel_coordinates = np.concatenate(all_pixel_coordinates, axis=0)
     all_object_poses = np.concatenate(all_object_poses, axis=0)
     all_object_scales = np.concatenate(all_object_scales, axis=0)
@@ -140,6 +144,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     train_images = all_images[train_indices]
     train_depth_images = all_depth_images[train_indices]
     train_segmentation_images = all_segmentation_images[train_indices]
+    train_asset_ids = all_asset_ids[train_indices]
     train_pixel_coordinates = all_pixel_coordinates[train_indices]
     train_object_poses = all_object_poses[train_indices]
     train_object_scales = all_object_scales[train_indices]
@@ -149,6 +154,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
     test_images = all_images[test_indices]
     test_depth_images = all_depth_images[test_indices]
     test_segmentation_images = all_segmentation_images[test_indices]
+    test_asset_ids = all_asset_ids[test_indices]
     test_pixel_coordinates = all_pixel_coordinates[test_indices]
     test_object_poses = all_object_poses[test_indices]
     test_object_scales = all_object_scales[test_indices]
@@ -196,6 +202,7 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
         train.create_dataset("images", data=train_images)
         train.create_dataset("depth_images", data=train_depth_images)
         train.create_dataset("segmentation_images", data=train_segmentation_images)
+        train.create_dataset("asset_ids", data=train_asset_ids)
         train.create_dataset("pixel_coordinates", data=train_pixel_coordinates)
         train.create_dataset("object_poses", data=train_object_poses)
         train.create_dataset("object_scales", data=train_object_scales)
@@ -208,6 +215,9 @@ def merge(hdf5_list: list, output_dir: str, new_train_frac: float = 0.95) -> Non
         # test data
         test = f.create_group("test")
         test.create_dataset("images", data=test_images)
+        test.create_dataset("depth_images", data=test_depth_images)
+        test.create_dataset("segmentation_images", data=test_segmentation_images)
+        test.create_dataset("asset_ids", data=test_asset_ids)
         test.create_dataset("pixel_coordinates", data=test_pixel_coordinates)
         test.create_dataset("object_poses", data=test_object_poses)
         test.create_dataset("object_scales", data=test_object_scales)
@@ -226,6 +236,10 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty4/mjc_data.hdf5",
         f"{ROOT}/data/qwerty5/mjc_data.hdf5",
         f"{ROOT}/data/qwerty6/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty7/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty8/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty9/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty10/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged"
     merge(hdf5_list, output_dir)
