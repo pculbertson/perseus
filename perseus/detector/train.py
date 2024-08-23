@@ -19,7 +19,7 @@ import wandb
 from perseus import ROOT
 from perseus.detector.data import AugmentationConfig, KeypointAugmentation, KeypointDataset, KeypointDatasetConfig
 from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
-from perseus.detector.models import KeypointCNN, KeypointGaussian, YOLOModel
+from perseus.detector.models import KeypointCNN, KeypointGaussian  # , YOLOModel
 from perseus.detector.utils import rank_print
 from wandb.util import generate_id
 
@@ -124,9 +124,9 @@ def initialize_training(  # noqa: PLR0915
     elif cfg.output_type == "regression":
         model = KeypointCNN(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W)
         loss_fn = nn.SmoothL1Loss(beta=1.0)
-    elif cfg.output_type == "yolo":
-        model = YOLOModel(version=10, size="n", n_keypoints=8)
-        loss_fn = nn.SmoothL1Loss(beta=1.0)
+    # elif cfg.output_type == "yolo":
+    #     model = YOLOModel(version=10, size="n", n_keypoints=8)
+    #     loss_fn = nn.SmoothL1Loss(beta=1.0)
     else:
         raise NotImplementedError(f"Output type {cfg.output_type} not implemented.")
 
@@ -208,7 +208,7 @@ def initialize_training(  # noqa: PLR0915
         model = torch.compile(model, mode="reduce-overhead")  # compiled model
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
     scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
 
