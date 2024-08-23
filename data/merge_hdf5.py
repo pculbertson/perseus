@@ -379,7 +379,7 @@ def merge(  # noqa: PLR0912, PLR0915
             train_depth_images, output_dir.split("/")[-1], "train", "depth", 0, ext="tiff"
         )
         test_depth_filenames = save_images_in_parallel(
-            test_depth_images, output_dir.split("/")[-1], "test", 0, "depth", ext="tiff"
+            test_depth_images, output_dir.split("/")[-1], "test", "depth", 0, ext="tiff"
         )
         train_segmentation_filenames = save_images_in_parallel(
             train_segmentation_images, output_dir.split("/")[-1], "train", "segmentation", 0
