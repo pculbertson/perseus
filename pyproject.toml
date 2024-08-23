@@ -14,11 +14,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 urls = { "Homepage" = "https://github.com/pculbertson/perseus" }
 dependencies = [
-    "numpy>=1.26.3",
+    "numpy>=1.23.0",
     "torch>=2.1.1",
     "torchvision>=0.16.2",
     "kornia>=0.7.1",
     "gtsam>=4.2",
+    "h5py>=3.11.0",
     "opencv-python>=4.9.0.80",
     "pyqt5>=5.15.10",
     "pyqtgraph>=0.13.3",
@@ -27,7 +28,99 @@ dependencies = [
     "plotly>=5.18.0",
     "qasync>=0.27.1",
     "pypose>=0.6.7",
+    "trimesh>=4.4.7",
+    "ultralytics>=8.2.78",
+    "super-gradients>=3.7.1",
+    "wandb>=0.17.7",
 ]
 
+# optional
+[project.optional-dependencies]
+datagen = [
+    "bpy==3.6.0",
+    "openexr>=3.2.4",
+    "pybullet>=3.2.6",
+    "tensorflow>=2.17.0",
+]
+dev = [
+    "perseus[datagen]",
+    "pre-commit>=3.7.1",
+    "ruff>=0.4.9",
+]
+
+[tool.ruff]
+line-length = 120
+respect-gitignore = false
+exclude=[
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+[tool.ruff.lint]
+pydocstyle.convention = "google"
+select = [
+    "ANN",  # annotations
+    "N",  # naming conventions
+    "D",  # docstrings
+    "B",  # flake8 bugbear
+    "E",  # pycodestyle errors
+    "F",  # Pyflakes rules
+    "I",  # isort formatting
+    "PLC",  # Pylint convention warnings
+    "PLE",  # Pylint errors
+    "PLR",  # Pylint refactor recommendations
+    "PLW",  # Pylint warnings
+]
+ignore = [
+    "ANN101",  # Missing type annotation for self
+    "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
+    "D100",  # missing docstring in public module
+    "D104",  # missing docstring in public package
+    "D203",  # blank line before class docstring
+    "D211",  # no blank line before class
+    "D212",  # multi-line docstring summary at first line
+    "D213",  # multi-line docstring summary at second line
+    "PLR0913",  # Too many arguments in function definition
+    "N803",  # Argument name <argument> should be lowercase
+    "N806",  # Variable in function should be lowercase
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["cerberus"]
+split-on-trailing-comma = false
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
 [tool.hatch.build.targets.wheel]
-include = ["perseus*"]
+include = ["perseus*", "kubric*"]
