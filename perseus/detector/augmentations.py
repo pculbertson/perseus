@@ -53,14 +53,16 @@ class DepthBiasAugmentation(nn.Module):
 class DepthGaussianNoiseAugmentation(nn.Module):
     """Adds Gaussian noise to depth images."""
 
-    def __init__(self, std: float = 0.005) -> None:
+    def __init__(self, std: float = 0.005, cube_scale: float = 0.035) -> None:
         """Initialize the augmentation.
 
         Args:
             std: The standard deviation of the Gaussian noise to add to the (scaled) depth image.
+            cube_scale: The scale of the cube in the depth image.
         """
         super().__init__()
         self.std = std
+        self.cube_scale = cube_scale
 
     def forward(self, depth_image: torch.Tensor) -> torch.Tensor:
         """Apply the augmentation to the depth image.
@@ -268,10 +270,10 @@ class KeypointAugmentation(torch.nn.Module):
 
         # RGB augmentations
         if cfg.planckian_jitter:
-            self.transforms.append(kornia.augmentation.RandomPlanckianJitter(mode="blackbody"))
+            self.rgb_transforms.append(kornia.augmentation.RandomPlanckianJitter(mode="blackbody"))
 
         if cfg.color_jiggle:
-            self.transforms.append(
+            self.rgb_transforms.append(
                 kornia.augmentation.ColorJiggle(
                     brightness=cfg.brightness,
                     contrast=cfg.contrast,
@@ -281,9 +283,9 @@ class KeypointAugmentation(torch.nn.Module):
             )
 
         if cfg.blur:
-            self.transforms.append(kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5))
+            self.rgb_transforms.append(kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5))
 
-        # TODO(ahl): depth augmentations
+        # depth augmentations
         if cfg.random_bias:
             self.depth_transforms.append(
                 DepthBiasAugmentation(dev=cfg.dev_bias, p_bias=cfg.p_bias, cube_scale=cfg.cube_scale)

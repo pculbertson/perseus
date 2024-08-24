@@ -38,7 +38,7 @@ class TrainConfig:
     learning_rate: float = 1e-3
 
     # The number of epochs to train for.
-    n_epochs: int = 200
+    n_epochs: int = 100
 
     # The device to train on.
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -62,7 +62,7 @@ class TrainConfig:
 
     # Model parameters.
     n_keypoints: int = 8
-    in_channels: int = 3
+    in_channels: int = 4  # 3 for RGB, 4 for RGBD, 5 for RGBDSeg
 
     # Whether to use multi-gpu training
     multigpu: bool = True
@@ -272,10 +272,11 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             with torch.autocast(
                 device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
             ):
-                images = example["image"].to(device)
+                images = example["image"].to(device)  # (B, 3, H, W)
                 pixel_coordinates = example["pixel_coordinates"].to(device)
-
-                # Augment.
+                if cfg.in_channels == 4:  # noqa: PLR2004
+                    depth_images = example["depth_image"].to(device)
+                    images = torch.cat((images, depth_images[..., None, :, :]), dim=-3)  # (B, 4, H, W)
                 images, pixel_coordinates = train_augment(images, pixel_coordinates)
 
                 # Forward pass.
@@ -324,7 +325,10 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     ):
                         images = example["image"].to(device)
                         pixel_coordinates = example["pixel_coordinates"].to(device)
-                        images, pixel_coordinates = val_augment(images, pixel_coordinates)  # augment
+                        if cfg.in_channels == 4:  # noqa: PLR2004
+                            depth_images = example["depth_image"].to(device)
+                            images = torch.cat((images, depth_images[..., None, :, :]), dim=-3)
+                        images, pixel_coordinates = val_augment(images, pixel_coordinates)
 
                         # Forward pass.
                         # [NOTE] when the model is in eval mode, the yolo model will only return the one-to-one path,
