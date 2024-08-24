@@ -354,8 +354,8 @@ def main(args: dict) -> None:  # noqa: PLR0915
         # Store hyperparameters.
         f.attrs["num_keypoints"] = args.num_keypoints
         f.attrs["train_frac"] = args.train_frac
-        f.attrs["H"] = image_list.shape[1]
-        f.attrs["W"] = image_list.shape[2]
+        f.attrs["H"] = image_list.shape[-3]
+        f.attrs["W"] = image_list.shape[-2]
 
     if args.debug_plot:
         plot_data(args_list[0])
