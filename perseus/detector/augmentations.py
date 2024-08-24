@@ -87,10 +87,12 @@ class DepthPlaneAugmentation(nn.Module):
         near_mean: float = 0.1,
         near_dev: float = 0.05,
         p_near: float = 0.5,
+        near_value: float = 0.0,
         far: bool = True,
         far_mean: float = 0.5,
         far_dev: float = 0.05,
         p_far: float = 0.5,
+        far_value: float = 0.0,
         cube_scale: float = 0.035,
     ) -> None:
         """Initialize the augmentation.
@@ -100,10 +102,12 @@ class DepthPlaneAugmentation(nn.Module):
             near_mean: The mean of the near plane cutoff.
             near_dev: The deviation of the near plane cutoff.
             p_near: The probability of sampling near plane cutoffs.
+            near_value: The value to set pixels below the near plane to.
             far: Whether to sample far plane cutoffs.
             far_mean: The mean of the far plane cutoff.
             far_dev: The deviation of the far plane cutoff.
             p_far: The probability of sampling far plane cutoffs.
+            far_value: The value to set pixels above the far plane to.
             cube_scale: The scale of the cube in the depth image.
         """
         super().__init__()
@@ -111,11 +115,13 @@ class DepthPlaneAugmentation(nn.Module):
         self.near_mean = near_mean
         self.near_dev = near_dev
         self.p_near = p_near
+        self.near_value = near_value
 
         self.far = far
         self.far_mean = far_mean
         self.far_dev = far_dev
         self.p_far = p_far
+        self.far_value = far_value
 
         self.cube_scale = cube_scale
 
@@ -141,7 +147,9 @@ class DepthPlaneAugmentation(nn.Module):
             # computing near plane and cutting off pixels
             near_plane = self.near_mean + near_dev
             near_mask = scaled_depth_image < near_plane
-            scaled_depth_image = torch.where(near_mask, torch.zeros_like(scaled_depth_image), scaled_depth_image)
+            scaled_depth_image = torch.where(
+                near_mask, self.near_value * torch.ones_like(scaled_depth_image), scaled_depth_image
+            )
 
         # similar logic for the far plane
         if self.far:
@@ -152,7 +160,9 @@ class DepthPlaneAugmentation(nn.Module):
             # computing far plane and cutting off pixels
             far_plane = self.far_mean + far_dev
             far_mask = scaled_depth_image > far_plane
-            scaled_depth_image = torch.where(far_mask, torch.zeros_like(scaled_depth_image), scaled_depth_image)
+            scaled_depth_image = torch.where(
+                far_mask, self.far_value * torch.ones_like(scaled_depth_image), scaled_depth_image
+            )
 
         # unscale the depth image
         new_depth_image = scaled_depth_image / self.cube_scale
@@ -175,7 +185,7 @@ class AugmentationConfig:
     # #################### #
 
     # random affine transformation + its parameters
-    random_affine: bool = False  # NOTE(ahl): I think this doesn't really match reality
+    random_affine: bool = True
     degrees: float = 90
     translate: Tuple[float, float] = (0.1, 0.1)
     scale: Tuple[float, float] = (0.9, 1.5)
@@ -218,11 +228,13 @@ class AugmentationConfig:
     scaled_near_plane_mean: float = 0.1  # after correcting for cube scale, the near plane is at 0.1m
     dev_near_plane: float = 0.05  # the amount of one-sided deviation in the plane to uniformly sample (0.1 +/- 0.05)
     p_near_plane: float = 0.5  # the probability of sampling deviations from the near plane
+    near_value: float = 0.0  # the value to set pixels below the near plane to
 
     random_far_plane: bool = True
     scaled_far_plane_mean: float = 0.5  # after correcting for cube scale, the far plane is at 0.5m
     dev_far_plane: float = 0.05  # the amount of one-sided deviation in the plane to uniformly sample (0.5 +/- 0.05)
     p_far_plane: float = 0.5  # the probability of sampling deviations from the far plane
+    far_value: float = 0.0  # the value to set pixels above the far plane to
 
 
 class KeypointAugmentation(torch.nn.Module):
@@ -244,7 +256,7 @@ class KeypointAugmentation(torch.nn.Module):
         self.depth_transforms = []
 
         # global augmentations
-        if cfg.random_affine:
+        if cfg.random_affine and train:
             self.global_transforms.append(
                 kornia.augmentation.RandomAffine(
                     degrees=cfg.degrees,
@@ -254,7 +266,7 @@ class KeypointAugmentation(torch.nn.Module):
                 )
             )
 
-        if cfg.random_erasing:
+        if cfg.random_erasing and train:
             self.global_transforms.append(
                 kornia.augmentation.RandomErasing(p=0.5, scale=(0.02, 0.1), ratio=(2.0, 3.0), same_on_batch=False)
             )
@@ -269,10 +281,10 @@ class KeypointAugmentation(torch.nn.Module):
             )
 
         # RGB augmentations
-        if cfg.planckian_jitter:
+        if cfg.planckian_jitter and train:
             self.rgb_transforms.append(kornia.augmentation.RandomPlanckianJitter(mode="blackbody"))
 
-        if cfg.color_jiggle:
+        if cfg.color_jiggle and train:
             self.rgb_transforms.append(
                 kornia.augmentation.ColorJiggle(
                     brightness=cfg.brightness,
@@ -282,32 +294,47 @@ class KeypointAugmentation(torch.nn.Module):
                 )
             )
 
-        if cfg.blur:
+        if cfg.blur and train:
             self.rgb_transforms.append(kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5))
 
         # depth augmentations
-        if cfg.random_bias:
+        if cfg.random_bias and train:
             self.depth_transforms.append(
                 DepthBiasAugmentation(dev=cfg.dev_bias, p_bias=cfg.p_bias, cube_scale=cfg.cube_scale)
             )
 
-        if cfg.depth_gaussian_noise:
+        if cfg.depth_gaussian_noise and train:
             self.depth_transforms.append(DepthGaussianNoiseAugmentation(std=cfg.std_gaussian_noise))
 
         if cfg.random_near_plane or cfg.random_far_plane:
-            self.depth_transforms.append(
-                DepthPlaneAugmentation(
-                    near=cfg.random_near_plane,
-                    near_mean=cfg.scaled_near_plane_mean,
-                    near_dev=cfg.dev_near_plane,
-                    p_near=cfg.p_near_plane,
-                    far=cfg.random_far_plane,
-                    far_mean=cfg.scaled_far_plane_mean,
-                    far_dev=cfg.dev_far_plane,
-                    p_far=cfg.p_far_plane,
-                    cube_scale=cfg.cube_scale,
+            if train:
+                self.depth_transforms.append(
+                    DepthPlaneAugmentation(
+                        near=cfg.random_near_plane,
+                        near_mean=cfg.scaled_near_plane_mean,
+                        near_dev=cfg.dev_near_plane,
+                        p_near=cfg.p_near_plane,
+                        far=cfg.random_far_plane,
+                        far_mean=cfg.scaled_far_plane_mean,
+                        far_dev=cfg.dev_far_plane,
+                        p_far=cfg.p_far_plane,
+                        cube_scale=cfg.cube_scale,
+                    )
                 )
-            )
+            else:
+                self.depth_transforms.append(
+                    DepthPlaneAugmentation(
+                        near=cfg.random_near_plane,
+                        near_mean=cfg.scaled_near_plane_mean,
+                        near_dev=cfg.dev_near_plane,
+                        p_near=0.0,
+                        far=cfg.random_far_plane,
+                        far_mean=cfg.scaled_far_plane_mean,
+                        far_dev=cfg.dev_far_plane,
+                        p_far=0.0,
+                        cube_scale=cfg.cube_scale,
+                    )
+                )  # in val mode, still cutoff near/far planes, but without noise
 
         # creating sequential augmentations
         self.global_transform_op = kornia.augmentation.AugmentationSequential(
@@ -334,18 +361,17 @@ class KeypointAugmentation(torch.nn.Module):
 
         # apply global transforms (all channels + keypoints)
         coords = pixel_coordinates.reshape(B, -1, 2)
-        if self.train:
-            if len(self.global_transforms) > 0:
-                images, coords = self.global_transform_op(images, coords)
+        if len(self.global_transforms) > 0:
+            images, coords = self.global_transform_op(images, coords)
 
-            # apply rgb transforms (only RGB channels)
-            if len(self.rgb_transforms) > 0:
-                images[..., :NUM_RGB_CHANNELS, :, :] = self.rgb_transform_op(images[..., :NUM_RGB_CHANNELS, :, :])
+        # apply rgb transforms (only RGB channels)
+        if len(self.rgb_transforms) > 0:
+            images[..., :NUM_RGB_CHANNELS, :, :] = self.rgb_transform_op(images[..., :NUM_RGB_CHANNELS, :, :])
 
-            # apply depth transforms (only depth channel)
-            if len(self.depth_transforms) > 0 and images.shape[-3] > NUM_RGB_CHANNELS:
-                images[..., DEPTH_CHANNEL_INDEX, :, :] = self.depth_transform_op(images[..., DEPTH_CHANNEL_INDEX, :, :])
+        # apply depth transforms (only depth channel)
+        if len(self.depth_transforms) > 0 and images.shape[-3] > NUM_RGB_CHANNELS:
+            images[..., DEPTH_CHANNEL_INDEX, :, :] = self.depth_transform_op(images[..., DEPTH_CHANNEL_INDEX, :, :])
 
-        # always normalize pixel coordinates
+        # normalize pixel coordinates
         coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
         return images, coords.reshape(B, -1)
