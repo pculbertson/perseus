@@ -175,7 +175,7 @@ class AugmentationConfig:
     # #################### #
 
     # random affine transformation + its parameters
-    random_affine: bool = True
+    random_affine: bool = False  # NOTE(ahl): I think this doesn't really match reality
     degrees: float = 90
     translate: Tuple[float, float] = (0.1, 0.1)
     scale: Tuple[float, float] = (0.9, 1.5)
