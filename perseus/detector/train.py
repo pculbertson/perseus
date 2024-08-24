@@ -210,7 +210,7 @@ def initialize_training(  # noqa: PLR0915
 
     # optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5)
+    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.1)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
 
     # wandb - only log if rank is 0 (will be 0 by default for single-gpu training)
