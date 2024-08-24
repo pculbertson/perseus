@@ -443,6 +443,7 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty9/mjc_data.hdf5",
         f"{ROOT}/data/qwerty10/mjc_data.hdf5",
         f"{ROOT}/data/qwerty11/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty12/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged_lazy"
     merge(hdf5_list, output_dir, shuffle=False)
