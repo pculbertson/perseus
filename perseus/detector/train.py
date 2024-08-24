@@ -17,7 +17,8 @@ from tqdm import tqdm
 
 import wandb
 from perseus import ROOT
-from perseus.detector.data import AugmentationConfig, KeypointAugmentation, KeypointDataset, KeypointDatasetConfig
+from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
+from perseus.detector.data import KeypointDataset, KeypointDatasetConfig
 from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
 from perseus.detector.models import KeypointCNN, KeypointGaussian  # , YOLOModel
 from perseus.detector.utils import rank_print

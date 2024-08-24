@@ -1,13 +1,10 @@
 import os
 from dataclasses import dataclass
-from typing import Tuple
 
 import h5py
-import kornia
 import numpy as np
 import tifffile
 import torch
-import tyro
 from PIL import Image
 
 # from super_gradients.common.decorators.factory_decorator import resolve_param
@@ -23,45 +20,11 @@ from perseus import ROOT
 
 
 @dataclass(frozen=True)
-class AugmentationConfig:
-    """Configuration for data augmentation."""
-
-    # Color jiggle parameters.
-    brightness: float = 0.2
-    contrast: float = 0.4
-    saturation: float = 0.4
-    hue: float = 0.025
-
-    # Random affine parameters.
-    degrees: float = 90
-    translate: Tuple[float, float] = (0.1, 0.1)
-    scale: Tuple[float, float] = (0.9, 1.5)
-    shear: float = 0.1
-
-    # Flags for which augmentations to apply.
-    color_jiggle: bool = True
-    random_affine: bool = True
-    planckian_jitter: bool = True
-    random_erasing: bool = True
-    blur: bool = True
-
-
-@dataclass(frozen=True)
 class KeypointDatasetConfig:
     """Configuration for the keypoint dataset."""
 
     dataset_path: str = "data/merged_lazy/merged.hdf5"
     lazy: bool = True
-
-
-@dataclass(frozen=True)
-class KeypointDatasetDebugConfig:
-    """Configuration for debugging the keypoint dataset."""
-
-    dataset_config = KeypointDatasetConfig()
-    augmentation_config = AugmentationConfig()
-    debug_index: int = 0
-    train: bool = True
 
 
 class KeypointDataset(Dataset):
@@ -157,7 +120,7 @@ class KeypointDataset(Dataset):
             original_seg_image = self.segmentation_images[traj_idx][image_idx]
 
         # convert to tensor
-        image = torch.from_numpy(_image.transpose(2, 0, 1) / 255.0)
+        image = torch.from_numpy(_image.transpose(2, 0, 1) / 255.0)  # (C, H, W)
         depth_image = torch.from_numpy(_depth_image)
 
         # the segmentation image is a binary mask of the cube
@@ -181,103 +144,6 @@ class KeypointDataset(Dataset):
             # "depth_filename": self.depth_filenames[traj_idx][image_idx],
             # "segmentation_filename": self.segmentation_filenames[traj_idx][image_idx],
         }
-
-
-class KeypointAugmentation(torch.nn.Module):
-    """Data augmentation for keypoint detection."""
-
-    def __init__(self, cfg: AugmentationConfig, train: bool = True) -> None:
-        """Initialize the augmentation.
-
-        Args:
-            cfg: The augmentation configuration.
-            train: Whether to apply training or test-time augmentations.
-        """
-        super().__init__()
-        self.cfg = cfg
-        self.train = train
-
-        self.transforms = []
-
-        if cfg.random_erasing:
-            self.transforms.append(
-                kornia.augmentation.RandomErasing(p=0.5, scale=(0.02, 0.1), ratio=(2.0, 3.0), same_on_batch=False)
-            )
-            self.transforms.append(
-                kornia.augmentation.RandomErasing(
-                    p=0.5,
-                    scale=(0.02, 0.05),
-                    ratio=(0.8, 1.2),
-                    same_on_batch=False,
-                    value=1,
-                )
-            )
-
-        if cfg.random_affine:
-            self.transforms.append(
-                kornia.augmentation.RandomAffine(
-                    degrees=cfg.degrees,
-                    translate=cfg.translate,
-                    scale=cfg.scale,
-                    shear=cfg.shear,
-                )
-            )
-
-        if cfg.random_erasing:
-            self.transforms.append(
-                kornia.augmentation.RandomErasing(p=0.5, scale=(0.02, 0.1), ratio=(2.0, 3.0), same_on_batch=False)
-            )
-            self.transforms.append(
-                kornia.augmentation.RandomErasing(
-                    p=0.5,
-                    scale=(0.02, 0.05),
-                    ratio=(0.8, 1.2),
-                    same_on_batch=False,
-                    value=1,
-                )
-            )
-
-        if cfg.planckian_jitter:
-            self.transforms.append(kornia.augmentation.RandomPlanckianJitter(mode="blackbody"))
-
-        if cfg.color_jiggle:
-            self.transforms.append(
-                kornia.augmentation.ColorJiggle(
-                    brightness=cfg.brightness,
-                    contrast=cfg.contrast,
-                    saturation=cfg.saturation,
-                    hue=cfg.hue,
-                )
-            )
-
-        if cfg.blur:
-            self.transforms.append(kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5))
-
-        self.transform_op = kornia.augmentation.AugmentationSequential(
-            *self.transforms, data_keys=["image", "keypoints"]
-        )
-
-    def forward(self, images: torch.Tensor, pixel_coordinates: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply augmentations to the images and pixel coordinates.
-
-        Args:
-            images: The images to augment.
-            pixel_coordinates: The pixel coordinates to augment.
-
-        Returns:
-            images: The augmented images.
-            pixel_coordinates: The augmented pixel coordinates.
-        """
-        B = images.shape[0]
-
-        coords = pixel_coordinates.reshape(B, -1, 2)
-
-        if len(self.transforms) > 0 and self.train:
-            images, coords = self.transform_op(images, coords)
-
-        coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
-
-        return images, coords.reshape(B, -1)
 
 
 # ######## #
@@ -424,40 +290,40 @@ class KeypointAugmentation(torch.nn.Module):
 #         )
 
 
-if __name__ == "__main__":
-    cfg = tyro.cli(KeypointDatasetDebugConfig)
-    dataset = KeypointDataset(cfg.dataset_config)
-    augment = KeypointAugmentation(cfg.augmentation_config, train=cfg.train)
+# if __name__ == "__main__":
+#     cfg = tyro.cli(KeypointDatasetDebugConfig)
+#     dataset = KeypointDataset(cfg.dataset_config)
+#     augment = KeypointAugmentation(cfg.augmentation_config, train=cfg.train)
 
-    example = dataset[cfg.debug_index]
-    image = example["image"]
-    raw_pixel_coordinates = example["pixel_coordinates"]
-    pixel_coordinates = raw_pixel_coordinates.clone()
+#     example = dataset[cfg.debug_index]
+#     image = example["image"]
+#     raw_pixel_coordinates = example["pixel_coordinates"]
+#     pixel_coordinates = raw_pixel_coordinates.clone()
 
-    print(pixel_coordinates.shape, image.shape)
+#     print(pixel_coordinates.shape, image.shape)
 
-    image, pixel_coordinates = augment(image.unsqueeze(0), pixel_coordinates.unsqueeze(0))
+#     image, pixel_coordinates = augment(image.unsqueeze(0), pixel_coordinates.unsqueeze(0))
 
-    print("image augmented")
+#     print("image augmented")
 
-    import matplotlib
+#     import matplotlib
 
-    matplotlib.use("Agg")
-    from matplotlib import pyplot as plt
+#     matplotlib.use("Agg")
+#     from matplotlib import pyplot as plt
 
-    # Visualize first image and keypoints.
+#     # Visualize first image and keypoints.
 
-    image = image.squeeze(0)
-    pixel_coordinates = pixel_coordinates.reshape(-1, 2)
+#     image = image.squeeze(0)
+#     pixel_coordinates = pixel_coordinates.reshape(-1, 2)
 
-    pixel_coordinates = kornia.geometry.conversions.denormalize_pixel_coordinates(
-        pixel_coordinates, image.shape[-2], image.shape[-1]
-    )
+#     pixel_coordinates = kornia.geometry.conversions.denormalize_pixel_coordinates(
+#         pixel_coordinates, image.shape[-2], image.shape[-1]
+#     )
 
-    plt.imshow(image.permute(1, 2, 0).numpy())
-    plt.scatter(
-        pixel_coordinates[:, 0].numpy(),
-        pixel_coordinates[:, 1].numpy(),
-    )
+#     plt.imshow(image.permute(1, 2, 0).numpy())
+#     plt.scatter(
+#         pixel_coordinates[:, 0].numpy(),
+#         pixel_coordinates[:, 1].numpy(),
+#     )
 
-    plt.savefig("outputs/figures/test.png")
+#     plt.savefig("outputs/figures/test.png")
