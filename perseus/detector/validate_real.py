@@ -41,14 +41,14 @@ def validate(cfg: ValConfig) -> None:  # noqa: PLR0912, PLR0915
     """Validate the model on the real dataset."""
     # create output dirs
     ckpt_name = str(cfg.model_path).split("/")[-1].split(".")[0]
-    Path(f"{ROOT}/outputs/figures/{ckpt_name}").mkdir(parents=True, exist_ok=True)
+    Path(f"{ROOT}/outputs/figures/{ckpt_name}/real").mkdir(parents=True, exist_ok=True)
 
     # Load model.
     if cfg.output_type == "gaussian":
         model = KeypointGaussian()
     else:
         model = KeypointCNN()
-    state_dict = torch.load(str(cfg.model_path))
+    state_dict = torch.load(str(cfg.model_path), weights_only=True)
     for key in list(state_dict.keys()):
         if "module." in key:
             state_dict[key.replace("module.", "")] = state_dict.pop(key)
@@ -166,7 +166,7 @@ def validate(cfg: ValConfig) -> None:  # noqa: PLR0912, PLR0915
 
     # images = [imageio.imread(imfile) for imfile in image_files]
     frames = np.stack([imageio.imread(imfile) for imfile in image_files], axis=0)
-    imageio.imwrite(f"{ROOT}/outputs/figures/{ckpt_name}/val.gif", frames, loop=0, fps=5)
+    imageio.imwrite(f"{ROOT}/outputs/figures/{ckpt_name}/real/val.gif", frames, loop=0, fps=5)
 
 
 if __name__ == "__main__":
