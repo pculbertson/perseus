@@ -337,7 +337,6 @@ class KeypointAugmentation(torch.nn.Module):
         if self.train:
             if len(self.global_transforms) > 0:
                 images, coords = self.global_transform_op(images, coords)
-            coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
 
             # apply rgb transforms (only RGB channels)
             if len(self.rgb_transforms) > 0:
@@ -347,4 +346,6 @@ class KeypointAugmentation(torch.nn.Module):
             if len(self.depth_transforms) > 0 and images.shape[-3] > NUM_RGB_CHANNELS:
                 images[..., DEPTH_CHANNEL_INDEX, :, :] = self.depth_transform_op(images[..., DEPTH_CHANNEL_INDEX, :, :])
 
+        # always normalize pixel coordinates
+        coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
         return images, coords.reshape(B, -1)
