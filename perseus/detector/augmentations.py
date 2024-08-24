@@ -276,7 +276,6 @@ class KeypointAugmentation(torch.nn.Module):
                     scale=(0.02, 0.05),
                     ratio=(0.8, 1.2),
                     same_on_batch=False,
-                    value=1,
                 )
             )
 
@@ -357,10 +356,10 @@ class KeypointAugmentation(torch.nn.Module):
             images: The augmented images.
             pixel_coordinates: The augmented pixel coordinates.
         """
-        B = images.shape[0]
+        leading_coords_shape = pixel_coordinates.shape[:-1]
 
         # apply global transforms (all channels + keypoints)
-        coords = pixel_coordinates.reshape(B, -1, 2)
+        coords = pixel_coordinates.reshape(*leading_coords_shape, -1, 2)
         if len(self.global_transforms) > 0:
             images, coords = self.global_transform_op(images, coords)
 
@@ -374,4 +373,10 @@ class KeypointAugmentation(torch.nn.Module):
 
         # normalize pixel coordinates
         coords = kornia.geometry.conversions.normalize_pixel_coordinates(coords, images.shape[-2], images.shape[-1])
-        return images, coords.reshape(B, -1)
+
+        # if no batch dim, unsqueeze
+        if len(images.shape) == 3:  # noqa: PLR2004
+            images = images.unsqueeze(0)
+            coords = coords.unsqueeze(0)
+
+        return images, coords.reshape(*leading_coords_shape, -1)
