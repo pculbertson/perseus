@@ -18,7 +18,7 @@ from tqdm import tqdm
 import wandb
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
-from perseus.detector.data import KeypointDataset, KeypointDatasetConfig
+from perseus.detector.data import KeypointDataset, KeypointDatasetConfig, PrunedKeypointDataset
 from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
 from perseus.detector.models import KeypointCNN, KeypointGaussian  # , YOLOModel
 from perseus.detector.utils import rank_print
@@ -56,6 +56,7 @@ class TrainConfig:
 
     # Dataset parameters.
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
+    pruned: bool = True
 
     # Data augmentation parameters.
     augmentation_config: AugmentationConfig = AugmentationConfig()
@@ -110,8 +111,12 @@ def initialize_training(  # noqa: PLR0915
     np.random.seed(cfg.random_seed)
 
     # getting datasets
-    train_dataset = KeypointDataset(cfg.dataset_config, train=True)
-    val_dataset = KeypointDataset(cfg.dataset_config, train=False)
+    if cfg.pruned:
+        train_dataset = PrunedKeypointDataset(cfg.dataset_config, train=True)
+        val_dataset = PrunedKeypointDataset(cfg.dataset_config, train=False)
+    else:
+        train_dataset = KeypointDataset(cfg.dataset_config, train=True)
+        val_dataset = KeypointDataset(cfg.dataset_config, train=False)
 
     # initializing the model + loss function
     if cfg.output_type == "gaussian":
@@ -288,7 +293,9 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     loss_o2m = loss_fn(pred_o2m, pixel_coordinates)
                     loss = loss_o2o + loss_o2m  # TODO(ahl): check whether this is batch-averaged
                 else:
-                    pred = model(images)  # TODO(pculbert): add some validation / shape checking.
+                    pred = model(images)
+                    if pred.shape[-1] != 2:  # noqa: PLR2004
+                        pred = pred.reshape(*pred.shape[:-1], cfg.n_keypoints, 2)
                     loss = loss_fn(pred, pixel_coordinates)
 
             # Log loss.
@@ -334,6 +341,8 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                         # [NOTE] when the model is in eval mode, the yolo model will only return the one-to-one path,
                         # so it becomes easier to compare the performance of the yolo model to the other models
                         pred = model(images)
+                        if pred.shape[-1] != 2:  # noqa: PLR2004
+                            pred = pred.reshape(*pred.shape[:-1], cfg.n_keypoints, 2)
                         loss = loss_fn(pred, pixel_coordinates)
 
                     val_loss += loss.item()
