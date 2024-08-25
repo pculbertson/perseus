@@ -106,7 +106,7 @@ def process_image(args: tuple) -> tuple | None:
 
 
 def prune_dataset(
-    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.5
+    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.9
 ) -> None:
     """Prune the dataset based on segmentation ratios."""
     print("=" * 80)
@@ -146,9 +146,15 @@ def prune_dataset(
                 dataset_out.create_dataset("pixel_coordinates", data=pruned_pixel_coordinates)
                 dataset_out.create_dataset("asset_ids", data=pruned_asset_ids)
 
+        # summarizing the dataset
+        print(f"Train dataset size: {len(f_out['train']['image_filenames'])}")
+        print(f"Test dataset size: {len(f_out['test']['image_filenames'])}")
+
         # Copy attributes
         for key, value in f_in.attrs.items():
             f_out.attrs[key] = value
+        f_out.attrs["seg_ratio_lb"] = lb
+        f_out.attrs["seg_ratio_ub"] = ub
 
 
 if __name__ == "__main__":
