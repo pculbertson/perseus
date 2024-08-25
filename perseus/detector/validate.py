@@ -22,7 +22,7 @@ matplotlib.use("Agg")
 class ValConfig:
     """Validation configuration."""
 
-    model_path: str = f"{ROOT}/outputs/models/gwjkvbia.pth"  # RGBD
+    model_path: str = f"{ROOT}/outputs/models/cqdozzle.pth"  # RGBD
     batch_size: int = 256 * 8
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(dataset_path=f"{ROOT}/data/merged_lazy/merged.hdf5")
     depth: bool = True
@@ -73,6 +73,7 @@ def plot_and_save(args: tuple) -> None:
                 alpha=0.9,
             )
 
+    plt.axis("off")
     plt.tight_layout()
     plt.savefig(output_dir / f"val_{batch_index * cfg.batch_size + image_index}.png", bbox_inches="tight", pad_inches=0)
     plt.close(fig)
@@ -140,15 +141,18 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
                 # )
             else:
                 predicted_pixel_coordinates = model(images)
-                loss = torch.nn.SmoothL1Loss(beta=1.0, reduction="none")(pixel_coordinates, predicted_pixel_coordinates)
+                loss = torch.nn.SmoothL1Loss(beta=1.0, reduction="none")(
+                    pixel_coordinates.reshape(*pixel_coordinates.shape[:-2], -1),
+                    predicted_pixel_coordinates,
+                )
                 losses.append(loss)
                 loss = loss.mean(dim=-1)
 
             # reshape
-            pixel_coordinates = pixel_coordinates.reshape(*pixel_coordinates.shape[:-1], -1, 2).detach()
+            pixel_coordinates = pixel_coordinates.detach()  # (B, K, 2)
             predicted_pixel_coordinates = predicted_pixel_coordinates.reshape(
                 *predicted_pixel_coordinates.shape[:-1], -1, 2
-            ).detach()
+            ).detach()  # (B, K, 2)
 
             # normalize
             pixel_coordinates = (
@@ -165,28 +169,28 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
         if cfg.output_type == "gaussian":
             raise NotImplementedError("TODO: put this back. Old code is commented out at bottom of this file.")
 
-        # Print loss statistics
-        losses = torch.stack(losses).squeeze(0)
-        print("=" * 80)
-        print("Validation Loss")
-        print(f"Mean +/- Stdev: {losses.mean()} +/- {losses.std()}")
-        print(f"Min: {losses.min()}")
-        print(f"Max: {losses.max()}")
-        print(f"Median: {torch.median(losses)}")
-        print("=" * 80)
-
-        # plot and save a loss histogram with semilogy axis
-        plt.hist(losses.cpu().numpy(), bins=100)
-        plt.yscale("log")
-        plt.savefig(output_dir / "loss_histogram.png")
-
         # Prepare arguments for plotting (move to CPU here)
         for j, (image, pixel_coordinate, predicted_pixel_coordinate) in enumerate(
             zip(images.cpu(), pixel_coordinates, predicted_pixel_coordinates, strict=False)
         ):
             plot_args.append((image, pixel_coordinate, predicted_pixel_coordinate, i, j))
 
-    return plot_args, model.n_keypoints, output_dir  # Moved return outside loop
+    # Print loss statistics
+    losses = torch.concatenate(losses).reshape(-1)
+    print("=" * 80)
+    print("Validation Loss")
+    print(f"Mean +/- Stdev: {losses.mean()} +/- {losses.std()}")
+    print(f"Min: {losses.min()}")
+    print(f"Max: {losses.max()}")
+    print(f"Median: {torch.median(losses)}")
+    print("=" * 80)
+
+    # plot and save a loss histogram with semilogy axis
+    plt.hist(losses.cpu().numpy(), bins=100)
+    plt.yscale("log")
+    plt.savefig(output_dir / "loss_histogram.png")
+
+    return plot_args, model.n_keypoints, output_dir
 
 
 def main() -> None:
