@@ -1,5 +1,7 @@
 import os
 from dataclasses import dataclass
+from operator import itemgetter
+from typing import Iterator, Optional
 
 import h5py
 import numpy as np
@@ -14,7 +16,7 @@ from PIL import Image
 # )
 # from super_gradients.training.samples import PoseEstimationSample
 # from super_gradients.training.transforms.keypoint_transforms import AbstractKeypointTransform
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DistributedSampler, Sampler
 
 from perseus import ROOT
 
@@ -54,6 +56,7 @@ class KeypointDataset(Dataset):
 
             self.W = f.attrs["W"]
             self.H = f.attrs["H"]
+            self.weights = dataset["weights"][()]
 
             # always load these quantities into memory
             self.pixel_coordinates = torch.from_numpy(dataset["pixel_coordinates"][()])
@@ -178,6 +181,7 @@ class PrunedKeypointDataset(Dataset):
 
             self.W = f.attrs["W"]
             self.H = f.attrs["H"]
+            self.weights = dataset["weights"][()]
 
             # always load these quantities into memory
             self.pixel_coordinates = torch.from_numpy(dataset["pixel_coordinates"][()])
@@ -225,6 +229,96 @@ class PrunedKeypointDataset(Dataset):
             "segmentation_image": segmentation_image,
             "pixel_coordinates": pixel_coordinates,
         }
+
+
+class DatasetFromSampler(Dataset):
+    """Dataset to create indexes from `Sampler`.
+
+    Stolen from
+    https://github.com/catalyst-team/catalyst/blob/e99f90655d0efcf22559a46e928f0f98c9807ebf/catalyst/data/dataset.py#L6
+
+    Args:
+        sampler: PyTorch sampler
+    """
+
+    def __init__(self, sampler: Sampler) -> None:
+        """Initialisation for DatasetFromSampler."""
+        self.sampler = sampler
+        self.sampler_list = None
+
+    def __getitem__(self, index: int) -> int:
+        """Gets element of the dataset.
+
+        Args:
+            index: index of the element in the dataset
+
+        Returns:
+            Single element by index
+        """
+        if self.sampler_list is None:
+            self.sampler_list = list(self.sampler)
+        return self.sampler_list[index]
+
+    def __len__(self) -> int:
+        """Length of the dataset.
+
+        Returns:
+            int: length of the dataset
+        """
+        return len(self.sampler)
+
+
+class DistributedSamplerWrapper(DistributedSampler):
+    """Wrapper over `Sampler` for distributed training.
+
+    Allows you to use any sampler in distributed mode.
+
+    It is especially useful in conjunction with
+    `torch.nn.parallel.DistributedDataParallel`. In such case, each
+    process can pass a DistributedSamplerWrapper instance as a DataLoader
+    sampler, and load a subset of subsampled data of the original dataset
+    that is exclusive to it.
+
+    Copy-pasted from
+    https://github.com/catalyst-team/catalyst/blob/e99f90655d0efcf22559a46e928f0f98c9807ebf/catalyst/data/sampler.py#L499
+    """
+
+    def __init__(
+        self,
+        sampler: Sampler,
+        num_replicas: Optional[int] = None,
+        rank: Optional[int] = None,
+        shuffle: bool = True,
+    ) -> None:
+        """Initialize.
+
+        Args:
+            sampler: Sampler used for subsampling
+            num_replicas (int, optional): Number of processes participating in
+                distributed training
+            rank (int, optional): Rank of the current process
+                within ``num_replicas``
+            shuffle (bool, optional): If true (default),
+                sampler will shuffle the indices
+        """
+        super(DistributedSamplerWrapper, self).__init__(
+            DatasetFromSampler(sampler),
+            num_replicas=num_replicas,
+            rank=rank,
+            shuffle=shuffle,
+        )
+        self.sampler = sampler
+
+    def __iter__(self) -> Iterator[int]:
+        """Iterate over sampler.
+
+        Returns:
+            python iterator
+        """
+        self.dataset = DatasetFromSampler(self.sampler)
+        indexes_of_indexes = super().__iter__()
+        subsampler_indexes = self.dataset
+        return iter(itemgetter(*indexes_of_indexes)(subsampler_indexes))
 
 
 # ######## #

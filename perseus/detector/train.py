@@ -11,14 +11,19 @@ import tyro
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: N817
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import wandb
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
-from perseus.detector.data import KeypointDataset, KeypointDatasetConfig, PrunedKeypointDataset
+from perseus.detector.data import (
+    DistributedSamplerWrapper,
+    KeypointDataset,
+    KeypointDatasetConfig,
+    PrunedKeypointDataset,
+)
 from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
 from perseus.detector.models import KeypointCNN, KeypointGaussian  # , YOLOModel
 from perseus.detector.utils import rank_print
@@ -57,6 +62,7 @@ class TrainConfig:
     # Dataset parameters.
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
     pruned: bool = True
+    weighted: bool = True
 
     # Data augmentation parameters.
     augmentation_config: AugmentationConfig = AugmentationConfig()
@@ -84,7 +90,7 @@ class TrainConfig:
     wandb_project: str = "perseus-detector"
 
 
-def initialize_training(  # noqa: PLR0915
+def initialize_training(  # noqa: PLR0912, PLR0915
     cfg: TrainConfig, rank: int = 0
 ) -> Tuple[
     torch.device,
@@ -151,12 +157,21 @@ def initialize_training(  # noqa: PLR0915
         device = torch.device("cuda", rank)
 
         # distributed samplers associated with each process
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=num_gpus,
-            rank=rank,
-            shuffle=True,
-        )
+        if cfg.weighted:
+            _train_sampler = WeightedRandomSampler(train_dataset.weights, len(train_dataset.weights), replacement=True)
+            train_sampler = DistributedSamplerWrapper(
+                _train_sampler,
+                num_replicas=num_gpus,
+                rank=rank,
+                shuffle=True,
+            )
+        else:
+            train_sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=num_gpus,
+                rank=rank,
+                shuffle=True,
+            )
         val_sampler = DistributedSampler(
             val_dataset,
             num_replicas=num_gpus,
@@ -176,7 +191,10 @@ def initialize_training(  # noqa: PLR0915
         device = torch.device(cfg.device)
 
         # no special samplers for single gpu training
-        train_sampler = None
+        if cfg.weighted:
+            train_sampler = WeightedRandomSampler(train_dataset.weights, len(train_dataset.weights), replacement=True)
+        else:
+            train_sampler = None
         val_sampler = None
         train_shuffle = True
         val_shuffle = False
