@@ -1,5 +1,6 @@
 import os
 import shutil
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import h5py
@@ -62,7 +63,7 @@ def save_images_in_parallel(
         """
         image, save_path, _ = image_data
         image = Image.fromarray(image)
-        image.save(save_path)
+        image.save(f"{ROOT}" + save_path)
         return save_path
 
     with ThreadPoolExecutor() as executor:
@@ -125,6 +126,59 @@ def copy_images_in_parallel(
             future.result()
 
     return filenames
+
+
+def compute_segmentation_ratios(segmentation_paths: list[list[str]]) -> np.ndarray:
+    """Compute segmentation ratios using threads.
+
+    Args:
+        segmentation_paths: list of lists of segmentation file paths.
+
+    Returns:
+        ratios: numpy array of segmentation ratios with shape (num_trajs, num_images_per_traj).
+    """
+
+    def compute_ratio(seg_path: str) -> float:
+        segmentation = np.array(Image.open(seg_path))
+        ratio = np.mean(segmentation > 0)
+        return ratio
+
+    num_trajs = len(segmentation_paths)
+    num_images_per_traj = len(segmentation_paths[0])
+    flattened_paths = [
+        (seg, i, j) for i, sub_seg_paths in enumerate(segmentation_paths) for j, seg in enumerate(sub_seg_paths)
+    ]
+
+    # computing the segmentation ratios in a parallelized way
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(compute_ratio, seg) for seg, i, j in flattened_paths]
+        results = [
+            future.result()
+            for future in tqdm(as_completed(futures), desc="Computing segmentation ratios", total=len(futures))
+        ]
+
+    ratios = np.empty((num_trajs, num_images_per_traj), dtype=float)
+    for (_, i, j), ratio in zip(flattened_paths, results, strict=False):
+        ratios[i, j] = ratio
+    return ratios
+
+
+def compute_weights(segmentation_ratios: np.ndarray, bin_edges: np.ndarray) -> np.ndarray:
+    """Compute weights based on the segmentation ratios.
+
+    Args:
+        segmentation_ratios: numpy array of segmentation ratios.
+        bin_edges: numpy array of bin edges for the histogram.
+
+    Returns:
+        weights: numpy array of weights based on the segmentation ratios.
+    """
+    bin_indices = np.digitize(segmentation_ratios.flatten(), bins=bin_edges, right=True)
+    freq = Counter(bin_indices)
+    weights = np.zeros(len(bin_indices))
+    for bin_idx, count in freq.items():
+        weights[bin_indices == bin_idx] = 1.0 / count
+    return weights
 
 
 def merge(  # noqa: PLR0912, PLR0915
@@ -388,6 +442,15 @@ def merge(  # noqa: PLR0912, PLR0915
             test_segmentation_images, output_dir.split("/")[-1], "test", "segmentation", 0
         )
 
+    # computing segmentation ratios
+    train_segmentation_ratios = compute_segmentation_ratios(train_segmentation_image_paths)
+    test_segmentation_ratios = compute_segmentation_ratios(test_segmentation_image_paths)
+
+    # computing frequency-based weights for each of the datapoints
+    bin_edges = np.linspace(0, 1, 100)  # 100 bins for segmentation ratios
+    train_weights = compute_weights(train_segmentation_ratios, bin_edges)
+    test_weights = compute_weights(test_segmentation_ratios, bin_edges)
+
     # creating new dataset
     print("Creating new dataset...")
     with h5py.File(f"{output_dir}/merged.hdf5", "w") as f:
@@ -412,6 +475,8 @@ def merge(  # noqa: PLR0912, PLR0915
         train.create_dataset("image_filenames", data=train_image_filenames)
         train.create_dataset("depth_filenames", data=train_depth_filenames)
         train.create_dataset("segmentation_filenames", data=train_segmentation_filenames)
+        train.create_dataset("segmentation_ratios", data=train_segmentation_ratios)
+        train.create_dataset("weights", data=train_weights)
 
         # test data
         test = f.create_group("test")
@@ -428,6 +493,8 @@ def merge(  # noqa: PLR0912, PLR0915
         test.create_dataset("image_filenames", data=test_image_filenames)
         test.create_dataset("depth_filenames", data=test_depth_filenames)
         test.create_dataset("segmentation_filenames", data=test_segmentation_filenames)
+        test.create_dataset("segmentation_ratios", data=test_segmentation_ratios)
+        test.create_dataset("weights", data=test_weights)
 
 
 if __name__ == "__main__":
@@ -448,6 +515,7 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty14/mjc_data.hdf5",
         f"{ROOT}/data/qwerty15/mjc_data.hdf5",
         f"{ROOT}/data/qwerty16/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty17/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged_lazy"
     merge(hdf5_list, output_dir, shuffle=False)
