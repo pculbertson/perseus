@@ -3,22 +3,9 @@ import os
 import shutil
 
 import h5py
-import numpy as np
-from PIL import Image
 from tqdm import tqdm
 
 from perseus import ROOT
-
-
-def calculate_segmentation_ratio(seg_filename: str, asset_id: int) -> float:
-    """Calculate the segmentation ratio for a given segmentation file and asset ID."""
-    seg_path = os.path.join(ROOT, "data", seg_filename)
-    with Image.open(seg_path) as segmentation:
-        segmentation_np = np.array(segmentation)
-
-    seg_mask = segmentation_np == (asset_id + 1)
-    seg_ratio = np.mean(seg_mask)
-    return seg_ratio
 
 
 def create_args_list(dataset_in: h5py.Group, split: str, lb: float, ub: float, output_data_dir: str) -> list:
@@ -36,6 +23,7 @@ def create_args_list(dataset_in: h5py.Group, split: str, lb: float, ub: float, o
             segmentation_filenames = dataset_in["segmentation_filenames"][traj_idx]
             pixel_coordinates = dataset_in["pixel_coordinates"][traj_idx]
             asset_ids = dataset_in["asset_ids"][traj_idx]
+            seg_ratio = dataset_in["segmentation_ratios"][traj_idx]
 
             args_list.extend(
                 [
@@ -46,6 +34,8 @@ def create_args_list(dataset_in: h5py.Group, split: str, lb: float, ub: float, o
                         segmentation_filenames[img_idx].decode("utf-8"),
                         pixel_coordinates[img_idx],
                         asset_ids[img_idx],
+                        seg_ratio[img_idx],
+                        dataset_in["weights"][traj_idx * len(image_filenames) + img_idx],
                         split,
                         lb,
                         ub,
@@ -69,12 +59,13 @@ def process_image(args: tuple) -> tuple | None:
         seg_filename,
         pixel_coordinates,
         asset_id,
+        seg_ratio,
+        weight,
         split,
         lb,
         ub,
         output_data_dir,
     ) = args
-    seg_ratio = calculate_segmentation_ratio(seg_filename, asset_id)
 
     if lb <= seg_ratio <= ub:
         new_image_filename = f"rgba_{new_img_idx:08d}.png"
@@ -101,12 +92,14 @@ def process_image(args: tuple) -> tuple | None:
             local_filename_prefix + new_seg_filename,
             pixel_coordinates,
             asset_id,
+            seg_ratio,
+            weight,
         )
     return None  # Explicitly return None if the segmentation ratio doesn't meet criteria
 
 
 def prune_dataset(
-    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.9
+    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.8
 ) -> None:
     """Prune the dataset based on segmentation ratios."""
     print("=" * 80)
@@ -136,6 +129,8 @@ def prune_dataset(
                     pruned_segmentation_filenames,
                     pruned_pixel_coordinates,
                     pruned_asset_ids,
+                    pruned_seg_ratios,
+                    pruned_weights,
                 ) = zip(*pruned_data, strict=False)
 
                 # Save pruned data to new HDF5 file
@@ -145,6 +140,8 @@ def prune_dataset(
                 dataset_out.create_dataset("segmentation_filenames", data=pruned_segmentation_filenames)
                 dataset_out.create_dataset("pixel_coordinates", data=pruned_pixel_coordinates)
                 dataset_out.create_dataset("asset_ids", data=pruned_asset_ids)
+                dataset_out.create_dataset("segmentation_ratios", data=pruned_seg_ratios)
+                dataset_out.create_dataset("weights", data=pruned_weights)
 
         # summarizing the dataset
         print(f"Train dataset size: {len(f_out['train']['image_filenames'])}")
