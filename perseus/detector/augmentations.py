@@ -359,7 +359,13 @@ class KeypointAugmentation(torch.nn.Module):
         leading_coords_shape = pixel_coordinates.shape[:-1]
 
         # apply global transforms (all channels + keypoints)
-        coords = pixel_coordinates.reshape(*leading_coords_shape, -1, 2)
+        if pixel_coordinates.shape[-1] != 2:  # noqa: PLR2004
+            coords = pixel_coordinates.reshape(*leading_coords_shape, -1, 2)
+        else:
+            if len(pixel_coordinates.shape) == 2:  # noqa: PLR2004
+                assert len(images.shape) == 3, "If no batch dim, images must be 3D"  # noqa: PLR2004
+            coords = pixel_coordinates
+
         if len(self.global_transforms) > 0:
             images, coords = self.global_transform_op(images, coords)
 
