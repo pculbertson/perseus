@@ -114,5 +114,5 @@ def main(hdf5_path: str, lb: float = 0.02, ub: float = 0.5) -> None:
 
 
 if __name__ == "__main__":
-    hdf5_path = "merged_lazy/merged.hdf5"
+    hdf5_path = f"{ROOT}/data/merged_lazy/merged.hdf5"
     main(hdf5_path, lb=0.02, ub=0.5)
