@@ -5,7 +5,7 @@ import torch
 
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
-from perseus.detector.data import KeypointDataset, KeypointDatasetConfig
+from perseus.detector.data import KeypointDataset, KeypointDatasetConfig, PrunedKeypointDataset
 
 
 def visualize_dataset(dataset: KeypointDataset, augmentation: KeypointAugmentation, mode: str) -> None:
@@ -62,13 +62,17 @@ def visualize_dataset(dataset: KeypointDataset, augmentation: KeypointAugmentati
     plt.savefig(f"{mode.lower()}_data_aug_examples.png", bbox_inches="tight", pad_inches=0)
 
 
-def main(hdf5_path: str) -> None:
+def main(hdf5_path: str, pruned: bool = True) -> None:
     """Main function."""
     data_cfg = KeypointDatasetConfig(dataset_path=hdf5_path)
 
     # Load train and test datasets
-    train_dataset = KeypointDataset(data_cfg, train=True)
-    test_dataset = KeypointDataset(data_cfg, train=False)
+    if pruned:
+        train_dataset = PrunedKeypointDataset(data_cfg, train=True)
+        test_dataset = PrunedKeypointDataset(data_cfg, train=False)
+    else:
+        train_dataset = KeypointDataset(data_cfg, train=True)
+        test_dataset = KeypointDataset(data_cfg, train=False)
 
     aug_cfg = AugmentationConfig()
     train_augmentation = KeypointAugmentation(aug_cfg, train=True)
@@ -80,5 +84,6 @@ def main(hdf5_path: str) -> None:
 
 
 if __name__ == "__main__":
-    hdf5_path = f"{ROOT}/data/merged_lazy/merged.hdf5"
-    main(hdf5_path)
+    # hdf5_path = f"{ROOT}/data/merged_lazy/merged.hdf5"
+    hdf5_path = f"{ROOT}/data/pruned_dataset/pruned.hdf5"
+    main(hdf5_path, pruned=True)
