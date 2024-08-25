@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
-from perseus.detector.data import KeypointDataset, KeypointDatasetConfig
+from perseus.detector.data import KeypointDataset, KeypointDatasetConfig, PrunedKeypointDataset
 from perseus.detector.models import KeypointCNN, KeypointGaussian
 
 matplotlib.use("Agg")
@@ -22,9 +22,12 @@ matplotlib.use("Agg")
 class ValConfig:
     """Validation configuration."""
 
-    model_path: str = f"{ROOT}/outputs/models/cqdozzle.pth"  # RGBD
+    model_path: str = f"{ROOT}/outputs/models/wzbx1og6.pth"  # RGBD
     batch_size: int = 256 * 8
-    dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(dataset_path=f"{ROOT}/data/merged_lazy/merged.hdf5")
+    dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(
+        dataset_path=f"{ROOT}/data/pruned_dataset/pruned.hdf5"
+    )
+    pruned: bool = True
     depth: bool = True
     augmentation_config: AugmentationConfig = AugmentationConfig()
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -73,7 +76,8 @@ def plot_and_save(args: tuple) -> None:
                 alpha=0.9,
             )
 
-    plt.axis("off")
+        ax.axis("off")
+
     plt.tight_layout()
     plt.savefig(output_dir / f"val_{batch_index * cfg.batch_size + image_index}.png", bbox_inches="tight", pad_inches=0)
     plt.close(fig)
@@ -99,7 +103,10 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
     model.eval()
 
     # Create dataloader.
-    val_dataset = KeypointDataset(cfg.dataset_config, train=cfg.use_train)
+    if cfg.pruned:
+        val_dataset = PrunedKeypointDataset(cfg.dataset_config, train=cfg.use_train)
+    else:
+        val_dataset = KeypointDataset(cfg.dataset_config, train=cfg.use_train)
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
