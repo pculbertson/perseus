@@ -210,6 +210,8 @@ class AugmentationConfig:
 
     blur: bool = True
 
+    random_plasma_shadow: bool = True
+
     # ########## #
     # DEPTH ONLY #
     # ########## #
@@ -295,6 +297,9 @@ class KeypointAugmentation(torch.nn.Module):
 
         if cfg.blur and train:
             self.rgb_transforms.append(kornia.augmentation.RandomGaussianBlur((5, 5), (3.0, 8.0), p=0.5))
+
+        if cfg.random_plasma_shadow and train:
+            self.rgb_transforms.append(kornia.augmentation.RandomPlasmaShadow())
 
         # depth augmentations
         if cfg.random_bias and train:
