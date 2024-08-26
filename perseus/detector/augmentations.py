@@ -169,6 +169,85 @@ class DepthPlaneAugmentation(nn.Module):
         return new_depth_image
 
 
+class RandomTransplantationWithDepth(nn.Module):
+    """Performs random transplantation of a patch from one image to another, using depth channels to correctly layer."""
+
+    def __init__(self, p: float = 0.5, lb_seg_ratio: float = 0.02, ub_seg_ratio: float = 0.9) -> None:
+        """Initialize the augmentation.
+
+        Args:
+            p: The probability of applying the augmentation.
+            lb_seg_ratio: The lower bound of the segmentation ratio for the new images.
+            ub_seg_ratio: The upper bound of the segmentation ratio for the new images.
+        """
+        super().__init__()
+        self.p = p
+        self.lb_seg_ratio = lb_seg_ratio
+        self.ub_seg_ratio = ub_seg_ratio
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Performs the augmentation with proper layering of depth channels.
+
+        Args:
+            images: The images to augment, also the source of donors for transplantation, shape=(B, C, H, W).
+
+        Returns:
+            new_images: The transplanted images, shape=(B, C, H, W).
+        """
+        assert images.shape[-3] == 5, "Images must have 5 channels for transplantation"  # noqa: PLR2004
+        rgb_images = images[..., :NUM_RGB_CHANNELS, :, :]  # (B, 3, H, W)
+        depth_images = images[..., DEPTH_CHANNEL_INDEX, :, :]  # (B, H, W)
+        seg_images = images[..., -1, :, :]  # (B, H, W)
+
+        # for each image in the batch, randomly select a donor image that is different from the current image
+        batch_size = images.shape[0]
+        donor_indices = (torch.arange(batch_size) + torch.randint(1, batch_size, (batch_size,))) % batch_size
+        donor_images = images[donor_indices]
+
+        # [OPTION] in the donor images, mask out the cube
+        # [NOTE] this leaves a pretty noticeable black blotch in the image, I prefer something more "realistic"
+        # ind_donor_cube = (donor_images[..., -1, :, :] == 1.0)[:, None, :, :]  # (B, 1, H, W)
+        # donor_images = torch.where(
+        #     ind_donor_cube, torch.tensor(0.0, device=donor_images.device), donor_images
+        # )  # (B, 5, H, W)
+
+        # start creating the donor masks - wherever the cube is NOT in the acceptor (original), we want to transplant
+        ind_acceptor_cube = seg_images == 1.0  # (B, H, W)
+        donor_masks = ~ind_acceptor_cube
+
+        # additionally, any pixel of the donor's depth image that is smaller than the acceptor's depth image wherever
+        # there is a cube pixel in the acceptor image should be added to the donor mask
+        depth_with_cube_acceptor = depth_images * ind_acceptor_cube
+        depth_with_cube_donor = donor_images[..., DEPTH_CHANNEL_INDEX, :, :] * ind_acceptor_cube
+        inds_donor_cube_pixel_closer = depth_with_cube_donor < depth_with_cube_acceptor
+        donor_masks[inds_donor_cube_pixel_closer] = True
+
+        # remove cube pixels from the donor mask
+        ind_donor_cube = donor_images[..., -1, :, :] == 1.0  # (B, H, W)
+        donor_masks = torch.where(ind_donor_cube, torch.zeros_like(donor_masks, device=donor_masks.device), donor_masks)
+
+        # create the new transplanted batch
+        _new_rgb_images = torch.where(
+            donor_masks.unsqueeze(1), donor_images[..., :NUM_RGB_CHANNELS, :, :], rgb_images
+        )  # (B, 3, H, W)
+        _new_depth_images = torch.where(donor_masks, donor_images[..., DEPTH_CHANNEL_INDEX, :, :], depth_images)[
+            :, None, ...
+        ]  # (B, 1, H, W)
+        _new_seg_images = (1.0 - donor_masks.float()).unsqueeze(1)
+        _new_seg_images = torch.where(
+            ind_donor_cube & ~ind_acceptor_cube,
+            torch.zeros_like(_new_seg_images[:, 0, ...]),
+            _new_seg_images[:, 0, ...],
+        )[:, None, ...]  # (B, 1, H, W), remove the donor cube pix from the new seg img unless part of the acceptor cube
+        _new_images = torch.cat([_new_rgb_images, _new_depth_images, _new_seg_images], dim=1)
+
+        # use the new images if the new segmentation ratio is within the bounds
+        new_seg_ratios = torch.mean(_new_seg_images, dim=(-2, -1)).squeeze()  # (B,)
+        ind_within_bounds = (new_seg_ratios >= self.lb_seg_ratio) & (new_seg_ratios <= self.ub_seg_ratio)
+        new_images = torch.where(ind_within_bounds.view(-1, 1, 1, 1), _new_images, images)  # ugly broadcasting
+        return new_images  # (B, 5, H, W)
+
+
 # ############################ #
 # AUGMENTATION CONFIG + MODULE #
 # ############################ #
@@ -370,6 +449,9 @@ class KeypointAugmentation(torch.nn.Module):
             if len(pixel_coordinates.shape) == 2:  # noqa: PLR2004
                 assert len(images.shape) == 3, "If no batch dim, images must be 3D"  # noqa: PLR2004
             coords = pixel_coordinates
+
+        # do random transplantation first thing
+        # TODO(ahl): do this
 
         if len(self.global_transforms) > 0:
             images, coords = self.global_transform_op(images, coords)
