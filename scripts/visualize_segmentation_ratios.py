@@ -1,69 +1,33 @@
 import math
 import os
-from multiprocessing import Pool, cpu_count
 
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-from tqdm import tqdm
 
 from perseus import ROOT
-
-
-def process_image_set(args: tuple) -> tuple | None:
-    """Process an image set and return the segmentation ratio."""
-    sfp, asset_id = args
-    try:
-        segmentation_path = os.path.join(ROOT, "data", sfp)
-        with Image.open(segmentation_path) as segmentation:
-            segmentation_np = np.array(segmentation)
-
-        asset_id_plus_one = asset_id + 1
-        seg_mask = segmentation_np == asset_id_plus_one
-        seg_ratio = np.mean(seg_mask)
-        return seg_ratio, seg_mask
-    except Exception as e:
-        print(f"Error processing {sfp}, {asset_id}: {e}")
-        return None
-
-
-def aggregate_results(results: list, shape: tuple) -> tuple:
-    """Aggregate the results of the image set processing."""
-    seg_ratios = np.full(shape, np.nan)
-    representative_images = {}
-
-    index = 0
-    for i in range(shape[0]):
-        for j in range(shape[1]):
-            if results[index] is not None:
-                seg_ratio, segmentation = results[index]
-                seg_ratios[i, j] = seg_ratio
-                if seg_ratio not in representative_images:
-                    representative_images[seg_ratio] = segmentation
-            index += 1
-
-    return seg_ratios, representative_images
 
 
 def main(hdf5_path: str, lb: float = 0.02, ub: float = 0.5) -> None:
     """Visualize the segmentation ratios of the training set."""
     with h5py.File(hdf5_path, "r") as f:
-        train = f["train"]
-        segmentation_filenames = train["segmentation_filenames"][()]
-        asset_ids = train["asset_ids"][()]
+        seg_ratios = f["train"]["segmentation_ratios"][()]
 
-        args_list = [
-            (sfp.decode("utf-8") if isinstance(sfp, bytes) else sfp, asset_id)
-            for _sfp, _asset_id in zip(segmentation_filenames, asset_ids, strict=False)
-            for sfp, asset_id in zip(_sfp, _asset_id, strict=False)
-        ]
+        # find the first images that belong in each of 100 bins for segmentation ratios
+        representative_images = {}
+        for i, _seg_ratio in enumerate(seg_ratios):
+            for j, seg_ratio in enumerate(_seg_ratio):
+                rounded_seg_ratio = math.floor(seg_ratio * 100) / 100  # round the seg_ratio into a bucket
+                if rounded_seg_ratio not in representative_images and rounded_seg_ratio != 1.0:
+                    segmentation_filename = f["train"]["segmentation_filenames"][i][j].decode("utf-8")
+                    asset_id = f["train"]["asset_ids"][i][j]
+                    segmentation_image = np.array(Image.open(os.path.join(ROOT, "data", segmentation_filename)))
+                    representative_images[rounded_seg_ratio] = segmentation_image == asset_id + 1
+                if len(representative_images) == 100:  # noqa: PLR2004
+                    break
 
-        with Pool(cpu_count()) as pool:
-            results = list(tqdm(pool.imap(process_image_set, args_list, chunksize=10), total=len(args_list)))
-            seg_ratios, representative_images = aggregate_results(results, segmentation_filenames.shape)
-
-    seg_ratios = seg_ratios.flatten()
+        seg_ratios = seg_ratios.flatten()  # for ease of plotting later, flatten
 
     # plot 1: histogram of segmentation ratios
     plt.hist(seg_ratios, bins=100, range=(0, 1))
@@ -75,18 +39,14 @@ def main(hdf5_path: str, lb: float = 0.02, ub: float = 0.5) -> None:
     # plot 2: representative images by segmentation ratio
     plot_images = {}
     for ratio, image in representative_images.items():
-        bucket = math.floor(ratio * 100) / 100
-        if bucket not in plot_images:
-            plot_images[bucket] = image
-        if len(plot_images) == 101:  # noqa: PLR2004
-            break
+        plot_images[ratio] = image
 
     fig, axs = plt.subplots(10, 10, figsize=(15, 15))
     axs = axs.flatten()
 
     sorted_buckets = sorted(plot_images.keys())
     for i, bucket in enumerate(sorted_buckets[:100]):
-        image = 1 - plot_images[bucket]
+        image = 1 - plot_images[bucket]  # plot the negative for visibility with white background
         axs[i].imshow(image, cmap="gray")
         axs[i].set_title(f"Ratio: {bucket:.2f}", fontsize=8)
         axs[i].axis("off")
