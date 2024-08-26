@@ -62,7 +62,7 @@ class TrainConfig:
     # Dataset parameters.
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
     pruned: bool = True
-    weighted: bool = True
+    weighted: bool = False
 
     # Data augmentation parameters.
     augmentation_config: AugmentationConfig = AugmentationConfig()
