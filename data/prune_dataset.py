@@ -99,7 +99,7 @@ def process_image(args: tuple) -> tuple | None:
 
 
 def prune_dataset(
-    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.8
+    input_hdf5_path: str, output_hdf5_path: str, output_data_dir: str, lb: float = 0.02, ub: float = 0.9
 ) -> None:
     """Prune the dataset based on segmentation ratios."""
     print("=" * 80)
