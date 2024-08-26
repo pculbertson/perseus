@@ -233,7 +233,7 @@ def initialize_training(  # noqa: PLR0912, PLR0915
 
     # optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.1)
+    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.25, min_lr=1e-6)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
 
     # wandb - only log if rank is 0 (will be 0 by default for single-gpu training)
@@ -297,10 +297,27 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             ):
                 images = example["image"].to(device)  # (B, 3, H, W)
                 pixel_coordinates = example["pixel_coordinates"].to(device)
-                if cfg.in_channels == 4:  # noqa: PLR2004
+
+                # add a depth channel if needed
+                if cfg.in_channels >= 4:  # noqa: PLR2004
                     depth_images = example["depth_image"].to(device)
                     images = torch.cat((images, depth_images[..., None, :, :]), dim=-3)  # (B, 4, H, W)
-                images, pixel_coordinates = train_augment(images, pixel_coordinates)
+
+                # if doing the transplantation augmentation but not using the segmentation image in the model, we need
+                # to add the segmentation image as an additional channel for just the augmentation and slice out the
+                # rgbd channels afterwards
+                if train_augment.cfg.random_transplantation_with_depth and cfg.in_channels < 5:  # noqa: PLR2004
+                    seg_images = example["segmentation_image"].to(device)
+                    if cfg.in_channels == 4:  # noqa: PLR2004
+                        images_aug = torch.cat((images, seg_images[..., None, :, :]), dim=-3)
+                    else:
+                        images_aug = torch.cat(
+                            (images, depth_images[..., None, :, :], seg_images[..., None, :, :]), dim=-3
+                        )
+                else:
+                    images_aug = images
+                _images, pixel_coordinates = train_augment(images_aug, pixel_coordinates)
+                images = _images[..., : cfg.in_channels, :, :]  # (B, in_channels, H, W)
 
                 # Forward pass.
                 if cfg.output_type == "yolo":
