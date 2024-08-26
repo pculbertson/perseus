@@ -62,7 +62,7 @@ class TrainConfig:
     # Dataset parameters.
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
     pruned: bool = True
-    weighted: bool = False
+    weighted: bool = True
 
     # Data augmentation parameters.
     augmentation_config: AugmentationConfig = AugmentationConfig()
@@ -233,7 +233,7 @@ def initialize_training(  # noqa: PLR0912, PLR0915
 
     # optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5)
+    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.1)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
 
     # wandb - only log if rank is 0 (will be 0 by default for single-gpu training)
