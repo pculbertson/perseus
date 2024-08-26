@@ -28,16 +28,21 @@ def process_image_set(args: tuple) -> tuple | None:
         return None
 
 
-def aggregate_results(results: list) -> tuple:
+def aggregate_results(results: list, shape: tuple) -> tuple:
     """Aggregate the results of the image set processing."""
-    seg_ratios = []
+    seg_ratios = np.full(shape, np.nan)
     representative_images = {}
-    for result in results:
-        if result is not None:
-            seg_ratio, segmentation = result
-            seg_ratios.append(seg_ratio)
-            if seg_ratio not in representative_images:
-                representative_images[seg_ratio] = segmentation
+
+    index = 0
+    for i in range(shape[0]):
+        for j in range(shape[1]):
+            if results[index] is not None:
+                seg_ratio, segmentation = results[index]
+                seg_ratios[i, j] = seg_ratio
+                if seg_ratio not in representative_images:
+                    representative_images[seg_ratio] = segmentation
+            index += 1
+
     return seg_ratios, representative_images
 
 
@@ -56,7 +61,9 @@ def main(hdf5_path: str, lb: float = 0.02, ub: float = 0.5) -> None:
 
         with Pool(cpu_count()) as pool:
             results = list(tqdm(pool.imap(process_image_set, args_list, chunksize=10), total=len(args_list)))
-            seg_ratios, representative_images = aggregate_results(results)
+            seg_ratios, representative_images = aggregate_results(results, segmentation_filenames.shape)
+
+    seg_ratios = seg_ratios.flatten()
 
     # plot 1: histogram of segmentation ratios
     plt.hist(seg_ratios, bins=100, range=(0, 1))
@@ -116,4 +123,4 @@ def main(hdf5_path: str, lb: float = 0.02, ub: float = 0.5) -> None:
 if __name__ == "__main__":
     # NOTE: this only works on non-pruned datasets - it is meant to be a tool to inform how to prune
     hdf5_path = f"{ROOT}/data/merged_lazy/merged.hdf5"
-    main(hdf5_path, lb=0.02, ub=0.5)
+    main(hdf5_path, lb=0.02, ub=0.9)
