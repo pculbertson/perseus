@@ -12,22 +12,39 @@ def visualize_dataset(dataset: KeypointDataset, augmentation: KeypointAugmentati
     """Visualize a dataset."""
     # Draw 16 random examples from the dataset
     inds = np.random.choice(len(dataset), 16)
-    images_stacked = []
-    pixel_coordinates = []
+    images_stacked_list = []
+    pixel_coordinates_list = []
+
+    # Collect and stack images, depth, and segmentation for the batch
+    batch_images = []
+    batch_pixel_coords = []
     for i in inds:
         example = dataset[i]
         image = example["image"]
         depth_image = example["depth_image"][None, ...]
         segmentation_image = example["segmentation_image"][None, ...]
-        pixel_coords = example["pixel_coordinates"]
 
+        # Stack the 3 channels (image, depth_image, segmentation_image) into one 5-channel image
         image_stacked = np.concatenate([image, depth_image, segmentation_image], axis=-3)
-        image_stacked, pixel_coords = augmentation(torch.tensor(image_stacked), pixel_coords)
 
-        images_stacked.append(image_stacked.numpy()[0].transpose(1, 2, 0))
-        pixel_coordinates.append(
-            kornia.geometry.denormalize_pixel_coordinates(pixel_coords, dataset.H, dataset.W).cpu().numpy()
+        batch_images.append(image_stacked)
+        batch_pixel_coords.append(example["pixel_coordinates"])
+
+    # Convert lists to tensors
+    batch_images = torch.tensor(np.stack(batch_images, axis=0))  # Shape: (16, 5, H, W)
+    batch_pixel_coords = torch.tensor(np.stack(batch_pixel_coords, axis=0))  # Shape: (16, num_coords, 2)
+
+    # Apply augmentation to the entire batch
+    batch_images_aug, batch_pixel_coords_aug = augmentation(batch_images, batch_pixel_coords)
+
+    # Convert the augmented batch back to lists
+    for i in range(16):
+        images_stacked_list.append(batch_images_aug[i].cpu().numpy().transpose(1, 2, 0))
+        pixel_coordinates_list.append(
+            kornia.geometry.denormalize_pixel_coordinates(batch_pixel_coords_aug[i], dataset.H, dataset.W).cpu().numpy()
         )
+    images_stacked = np.stack(images_stacked_list, axis=0)
+    pixel_coordinates = np.stack(pixel_coordinates_list, axis=0)
 
     # Create a square plot, with each entry being a 1x3 subplot
     fig = plt.figure(figsize=(19.2, 10.8), dpi=100)  # Adjust size and DPI as needed

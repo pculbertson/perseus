@@ -194,7 +194,10 @@ class RandomTransplantationWithDepth(nn.Module):
         Returns:
             new_images: The transplanted images, shape=(B, C, H, W).
         """
-        assert images.shape[-3] == 5, "Images must have 5 channels for transplantation"  # noqa: PLR2004
+        # only apply the random transplantation if segmentation images are available and the images are batched
+        if images.shape[-3] != 5 or len(images.shape) <= 3:  # noqa: PLR2004
+            return images
+
         rgb_images = images[..., :NUM_RGB_CHANNELS, :, :]  # (B, 3, H, W)
         depth_images = images[..., DEPTH_CHANNEL_INDEX, :, :]  # (B, H, W)
         seg_images = images[..., -1, :, :]  # (B, H, W)
@@ -202,7 +205,7 @@ class RandomTransplantationWithDepth(nn.Module):
         # for each image in the batch, randomly select a donor image that is different from the current image
         batch_size = images.shape[0]
         donor_indices = (torch.arange(batch_size) + torch.randint(1, batch_size, (batch_size,))) % batch_size
-        donor_images = images[donor_indices]
+        donor_images = images[donor_indices]  # (B, 5, H, W)
 
         # [OPTION] in the donor images, mask out the cube
         # [NOTE] this leaves a pretty noticeable black blotch in the image, I prefer something more "realistic"
@@ -217,10 +220,10 @@ class RandomTransplantationWithDepth(nn.Module):
 
         # additionally, any pixel of the donor's depth image that is smaller than the acceptor's depth image wherever
         # there is a cube pixel in the acceptor image should be added to the donor mask
-        depth_with_cube_acceptor = depth_images * ind_acceptor_cube
-        depth_with_cube_donor = donor_images[..., DEPTH_CHANNEL_INDEX, :, :] * ind_acceptor_cube
-        inds_donor_cube_pixel_closer = depth_with_cube_donor < depth_with_cube_acceptor
-        donor_masks[inds_donor_cube_pixel_closer] = True
+        depth_with_cube_acceptor = depth_images * ind_acceptor_cube  # (B, H, W)
+        depth_with_cube_donor = donor_images[..., DEPTH_CHANNEL_INDEX, :, :] * ind_acceptor_cube  # (B, H, W)
+        inds_donor_cube_pixel_closer = depth_with_cube_donor < depth_with_cube_acceptor  # (B, H, W)
+        donor_masks[inds_donor_cube_pixel_closer] = True  # (B, H, W)
 
         # remove cube pixels from the donor mask
         ind_donor_cube = donor_images[..., -1, :, :] == 1.0  # (B, H, W)
@@ -233,13 +236,13 @@ class RandomTransplantationWithDepth(nn.Module):
         _new_depth_images = torch.where(donor_masks, donor_images[..., DEPTH_CHANNEL_INDEX, :, :], depth_images)[
             :, None, ...
         ]  # (B, 1, H, W)
-        _new_seg_images = (1.0 - donor_masks.float()).unsqueeze(1)
+        _new_seg_images = (1.0 - donor_masks.float()).unsqueeze(1)  # (B, 1, H, W)
         _new_seg_images = torch.where(
             ind_donor_cube & ~ind_acceptor_cube,
             torch.zeros_like(_new_seg_images[:, 0, ...]),
             _new_seg_images[:, 0, ...],
         )[:, None, ...]  # (B, 1, H, W), remove the donor cube pix from the new seg img unless part of the acceptor cube
-        _new_images = torch.cat([_new_rgb_images, _new_depth_images, _new_seg_images], dim=1)
+        _new_images = torch.cat([_new_rgb_images, _new_depth_images, _new_seg_images], dim=1)  # (B, 5, H, W)
 
         # use the new images if the new segmentation ratio is within the bounds
         new_seg_ratios = torch.mean(_new_seg_images, dim=(-2, -1)).squeeze()  # (B,)
@@ -262,6 +265,9 @@ class AugmentationConfig:
     # #################### #
     # GLOBAL AUGMENTATIONS #
     # #################### #
+
+    # random transplantation using depth
+    random_transplantation_with_depth: bool = True
 
     # random affine transformation + its parameters
     random_affine: bool = True
@@ -332,9 +338,14 @@ class KeypointAugmentation(torch.nn.Module):
         self.cfg = cfg
         self.train = train
 
+        self.global_transforms_no_kornia = []
         self.global_transforms = []
         self.rgb_transforms = []
         self.depth_transforms = []
+
+        # non-kornia global augmentations
+        if cfg.random_transplantation_with_depth and train:
+            self.global_transforms_no_kornia.append(RandomTransplantationWithDepth())
 
         # global augmentations
         if cfg.random_affine and train:
@@ -420,6 +431,7 @@ class KeypointAugmentation(torch.nn.Module):
                 )  # in val mode, still cutoff near/far planes, but without noise
 
         # creating sequential augmentations
+        self.global_transform_op_no_kornia = nn.Sequential(*self.global_transforms_no_kornia)
         self.global_transform_op = kornia.augmentation.AugmentationSequential(
             *self.global_transforms, data_keys=["image", "keypoints"]
         )
@@ -451,7 +463,8 @@ class KeypointAugmentation(torch.nn.Module):
             coords = pixel_coordinates
 
         # do random transplantation first thing
-        # TODO(ahl): do this
+        if len(self.global_transforms_no_kornia) > 0:
+            images = self.global_transform_op_no_kornia(images)
 
         if len(self.global_transforms) > 0:
             images, coords = self.global_transform_op(images, coords)
