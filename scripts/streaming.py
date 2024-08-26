@@ -86,20 +86,21 @@ class ZEDCamera:
         self.camera.close()
 
 
-def main(serial_number: int, window_size: int = 800) -> None:
+def main(serial_number: int, window_width: int = 1600, window_height: int = 800) -> None:
     """Main function for streaming ZED camera feed and displaying keypoint predictions.
 
     Args:
         serial_number: The serial number of the ZED camera.
-        window_size: The side length of the square window in pixels.
+        window_width: The width of the window in pixels.
+        window_height: The height of the window in pixels.
     """
     window_name = "ZED Camera Stream"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, window_size, window_size)  # Adjust the size as needed
+    cv2.resizeWindow(window_name, window_width, window_height)
 
-    zed_camera = ZEDCamera(serial_number)  # options: 12746523, 14390641, 19798856
-    model = KeypointCNN(num_channels=4 if zed_camera.depth else 3)
-    state_dict = torch.load(f"{ROOT}/outputs/models/wzbx1og6.pth", weights_only=True)
+    zed_camera = ZEDCamera(serial_number, depth=True)  # Ensure depth is enabled
+    model = KeypointCNN(num_channels=4)  # Use 4 channels for RGBD
+    state_dict = torch.load(f"{ROOT}/outputs/models/4b8hrqoo.pth", weights_only=True)
     for key in list(state_dict.keys()):
         if "module." in key:
             state_dict[key.replace("module.", "")] = state_dict.pop(key)
@@ -112,18 +113,33 @@ def main(serial_number: int, window_size: int = 800) -> None:
             continue
 
         with torch.no_grad():
-            image_tensor = torch.from_numpy(frame).permute(2, 0, 1).float()  # (H, W, C) -> (C, H, W)
+            image_tensor = torch.from_numpy(frame).permute(2, 0, 1).float()
             raw_pixel_coordinates = model(image_tensor[None, ...]).reshape(-1, 2).detach()
             keypoints = (
                 kornia.geometry.denormalize_pixel_coordinates(raw_pixel_coordinates, model.H, model.W).cpu().numpy()
             )
 
-        # Draw keypoints
-        for kp in keypoints:
-            cv2.circle(frame, (int(kp[0]), int(kp[1])), radius=5, color=(0, 0, 1), thickness=-1)  # Red keypoints
+        # Separate RGB and depth channels
+        rgb_frame = (frame[..., :3] * 255).astype(np.uint8)
+        depth_frame = frame[..., 3]
 
-        resized_frame = cv2.resize((frame[..., :3][..., ::-1] * 255).astype(np.uint8), (window_size, window_size))
-        cv2.imshow(window_name, resized_frame)
+        # Normalize depth for visualization
+        depth_normalized = cv2.normalize(depth_frame, None, 0, 255, cv2.NORM_MINMAX)
+        depth_colored = cv2.applyColorMap(depth_normalized.astype(np.uint8), cv2.COLORMAP_JET)
+
+        # Draw keypoints on both RGB and depth images
+        for kp in keypoints:
+            cv2.circle(rgb_frame, (int(kp[0]), int(kp[1])), radius=5, color=(255, 0, 0), thickness=-1)
+            cv2.circle(depth_colored, (int(kp[0]), int(kp[1])), radius=5, color=(0, 255, 0), thickness=-1)
+
+        # Resize frames
+        rgb_resized = cv2.resize(rgb_frame[..., ::-1], (window_width // 2, window_height))
+        depth_resized = cv2.resize(depth_colored, (window_width // 2, window_height))
+
+        # Concatenate frames side by side
+        combined_frame = np.hstack((rgb_resized, depth_resized))
+
+        cv2.imshow(window_name, combined_frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
@@ -132,6 +148,5 @@ def main(serial_number: int, window_size: int = 800) -> None:
 
 
 if __name__ == "__main__":
-    serial_number = 12746523  # options: 12746523, 14390641, 19798856
-    window_size = 800  # side length of square window in pixels
-    main(serial_number, window_size=window_size)
+    serial_number = 14390641  # options: 12746523, 14390641, 19798856
+    main(serial_number, window_width=1600, window_height=800)
