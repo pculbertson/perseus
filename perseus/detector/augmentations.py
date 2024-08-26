@@ -172,7 +172,7 @@ class DepthPlaneAugmentation(nn.Module):
 class RandomTransplantationWithDepth(nn.Module):
     """Performs random transplantation of a patch from one image to another, using depth channels to correctly layer."""
 
-    def __init__(self, p: float = 0.5, lb_seg_ratio: float = 0.02, ub_seg_ratio: float = 0.9) -> None:
+    def __init__(self, p: float = 0.5, lb_seg_ratio: float = 0.02, ub_seg_ratio: float = 0.7) -> None:
         """Initialize the augmentation.
 
         Args:
