@@ -128,38 +128,47 @@ def copy_images_in_parallel(
     return filenames
 
 
-def compute_segmentation_ratios(segmentation_paths: list[list[str]]) -> np.ndarray:
+def compute_segmentation_ratios(segmentation_paths: list[list[str]], asset_ids: list[list[int]]) -> np.ndarray:
     """Compute segmentation ratios using threads.
 
     Args:
         segmentation_paths: list of lists of segmentation file paths.
+        asset_ids: list of lists of asset IDs corresponding to each segmentation image.
 
     Returns:
         ratios: numpy array of segmentation ratios with shape (num_trajs, num_images_per_traj).
     """
 
-    def compute_ratio(seg_path: str) -> float:
-        segmentation = np.array(Image.open(seg_path))
-        ratio = np.mean(segmentation > 0)
-        return ratio
+    def process_image_set(args: tuple) -> tuple:
+        """Process an image set and return the segmentation ratio."""
+        sfp, asset_id = args
+        try:
+            with Image.open(sfp) as segmentation:
+                segmentation_np = np.array(segmentation)
+            seg_mask = segmentation_np == (asset_id + 1)
+            seg_ratio = np.mean(seg_mask)
+            return seg_ratio
+        except Exception as e:
+            print(f"Error processing {sfp}, {asset_id}: {e}")
+            return np.nan
 
     num_trajs = len(segmentation_paths)
     num_images_per_traj = len(segmentation_paths[0])
-    flattened_paths = [
-        (seg, i, j) for i, sub_seg_paths in enumerate(segmentation_paths) for j, seg in enumerate(sub_seg_paths)
-    ]
+    ratios = np.full((num_trajs, num_images_per_traj), np.nan)
 
-    # computing the segmentation ratios in a parallelized way
     with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(compute_ratio, seg) for seg, i, j in flattened_paths]
-        results = [
-            future.result()
-            for future in tqdm(as_completed(futures), desc="Computing segmentation ratios", total=len(futures))
-        ]
+        future_to_index = {
+            executor.submit(process_image_set, (segmentation_paths[i][j], asset_ids[i][j])): (i, j)
+            for i in range(num_trajs)
+            for j in range(num_images_per_traj)
+        }
 
-    ratios = np.empty((num_trajs, num_images_per_traj), dtype=float)
-    for (_, i, j), ratio in zip(flattened_paths, results, strict=False):
-        ratios[i, j] = ratio
+        for future in tqdm(
+            as_completed(future_to_index), total=len(future_to_index), desc="Computing segmentation ratios"
+        ):
+            i, j = future_to_index[future]
+            ratios[i, j] = future.result()
+
     return ratios
 
 
@@ -443,8 +452,8 @@ def merge(  # noqa: PLR0912, PLR0915
         )
 
     # computing segmentation ratios
-    train_segmentation_ratios = compute_segmentation_ratios(train_segmentation_image_paths)
-    test_segmentation_ratios = compute_segmentation_ratios(test_segmentation_image_paths)
+    train_segmentation_ratios = compute_segmentation_ratios(train_segmentation_image_paths, train_asset_ids)
+    test_segmentation_ratios = compute_segmentation_ratios(test_segmentation_image_paths, test_asset_ids)
 
     # computing frequency-based weights for each of the datapoints
     bin_edges = np.linspace(0, 1, 100)  # 100 bins for segmentation ratios
