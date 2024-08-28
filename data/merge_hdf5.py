@@ -525,6 +525,8 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty15/mjc_data.hdf5",
         f"{ROOT}/data/qwerty16/mjc_data.hdf5",
         f"{ROOT}/data/qwerty17/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty18/mjc_data.hdf5",
+        f"{ROOT}/data/qwerty19/mjc_data.hdf5",
     ]
     output_dir = f"{ROOT}/data/merged_lazy"
     merge(hdf5_list, output_dir, shuffle=False)
