@@ -11,15 +11,21 @@ import tyro
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP  # noqa: N817
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import wandb
 from perseus import ROOT
-from perseus.detector.data import AugmentationConfig, KeypointAugmentation, KeypointDataset, KeypointDatasetConfig
+from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
+from perseus.detector.data import (
+    DistributedSamplerWrapper,
+    KeypointDataset,
+    KeypointDatasetConfig,
+    PrunedKeypointDataset,
+)
 from perseus.detector.loss import _gaussian_chol_loss_fn, _gaussian_diag_loss_fn
-from perseus.detector.models import KeypointCNN, KeypointGaussian, YOLOModel
+from perseus.detector.models import KeypointCNN, KeypointGaussian  # , YOLOModel
 from perseus.detector.utils import rank_print
 from wandb.util import generate_id
 
@@ -31,7 +37,7 @@ class TrainConfig:
     """Configuration for training."""
 
     # The batch size.
-    batch_size: int = 64
+    batch_size: int = 256
 
     # The (initial) learning rate set in the optimizer.
     learning_rate: float = 1e-3
@@ -55,13 +61,15 @@ class TrainConfig:
 
     # Dataset parameters.
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig()
+    pruned: bool = True
+    weighted: bool = False
 
     # Data augmentation parameters.
     augmentation_config: AugmentationConfig = AugmentationConfig()
 
     # Model parameters.
     n_keypoints: int = 8
-    in_channels: int = 3
+    in_channels: int = 4  # 3 for RGB, 4 for RGBD, 5 for RGBDSeg
 
     # Whether to use multi-gpu training
     multigpu: bool = True
@@ -82,7 +90,7 @@ class TrainConfig:
     wandb_project: str = "perseus-detector"
 
 
-def initialize_training(  # noqa: PLR0915
+def initialize_training(  # noqa: PLR0912, PLR0915
     cfg: TrainConfig, rank: int = 0
 ) -> Tuple[
     torch.device,
@@ -109,8 +117,12 @@ def initialize_training(  # noqa: PLR0915
     np.random.seed(cfg.random_seed)
 
     # getting datasets
-    train_dataset = KeypointDataset(cfg.dataset_config, train=True)
-    val_dataset = KeypointDataset(cfg.dataset_config, train=False)
+    if cfg.pruned:
+        train_dataset = PrunedKeypointDataset(cfg.dataset_config, train=True)
+        val_dataset = PrunedKeypointDataset(cfg.dataset_config, train=False)
+    else:
+        train_dataset = KeypointDataset(cfg.dataset_config, train=True)
+        val_dataset = KeypointDataset(cfg.dataset_config, train=False)
 
     # initializing the model + loss function
     if cfg.output_type == "gaussian":
@@ -124,9 +136,9 @@ def initialize_training(  # noqa: PLR0915
     elif cfg.output_type == "regression":
         model = KeypointCNN(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W)
         loss_fn = nn.SmoothL1Loss(beta=1.0)
-    elif cfg.output_type == "yolo":
-        model = YOLOModel(version=10, size="n", n_keypoints=8)
-        loss_fn = nn.SmoothL1Loss(beta=1.0)
+    # elif cfg.output_type == "yolo":
+    #     model = YOLOModel(version=10, size="n", n_keypoints=8)
+    #     loss_fn = nn.SmoothL1Loss(beta=1.0)
     else:
         raise NotImplementedError(f"Output type {cfg.output_type} not implemented.")
 
@@ -145,12 +157,21 @@ def initialize_training(  # noqa: PLR0915
         device = torch.device("cuda", rank)
 
         # distributed samplers associated with each process
-        train_sampler = DistributedSampler(
-            train_dataset,
-            num_replicas=num_gpus,
-            rank=rank,
-            shuffle=True,
-        )
+        if cfg.weighted:
+            _train_sampler = WeightedRandomSampler(train_dataset.weights, len(train_dataset.weights), replacement=True)
+            train_sampler = DistributedSamplerWrapper(
+                _train_sampler,
+                num_replicas=num_gpus,
+                rank=rank,
+                shuffle=True,
+            )
+        else:
+            train_sampler = DistributedSampler(
+                train_dataset,
+                num_replicas=num_gpus,
+                rank=rank,
+                shuffle=True,
+            )
         val_sampler = DistributedSampler(
             val_dataset,
             num_replicas=num_gpus,
@@ -161,7 +182,7 @@ def initialize_training(  # noqa: PLR0915
         val_shuffle = None
 
         # wrapping model in DDP + sending to device
-        model = DDP(model.to(device), device_ids=[rank], find_unused_parameters=True)
+        model = DDP(model.to(device), device_ids=[rank])
 
     else:
         print("Creating dataloaders...")
@@ -170,7 +191,10 @@ def initialize_training(  # noqa: PLR0915
         device = torch.device(cfg.device)
 
         # no special samplers for single gpu training
-        train_sampler = None
+        if cfg.weighted:
+            train_sampler = WeightedRandomSampler(train_dataset.weights, len(train_dataset.weights), replacement=True)
+        else:
+            train_sampler = None
         val_sampler = None
         train_shuffle = True
         val_shuffle = False
@@ -180,11 +204,13 @@ def initialize_training(  # noqa: PLR0915
 
     # creating dataloaders
     num_workers = 4  # TODO(ahl): optimize this instead of using a magic number
+    prefetch_factor = 2
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
         shuffle=train_shuffle,
         num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
         pin_memory=True,
         sampler=train_sampler,
         multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
@@ -194,6 +220,7 @@ def initialize_training(  # noqa: PLR0915
         batch_size=cfg.batch_size,
         shuffle=val_shuffle,
         num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
         pin_memory=True,
         sampler=val_sampler,
         multiprocessing_context="fork",  # TODO(ahl): this was important on vulcan, double check on new machine
@@ -205,8 +232,8 @@ def initialize_training(  # noqa: PLR0915
         model = torch.compile(model, mode="reduce-overhead")  # compiled model
 
     # optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate)
+    scheduler = ReduceLROnPlateau(optimizer, "min", patience=5, factor=0.25, min_lr=1e-6)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.amp)
 
     # wandb - only log if rank is 0 (will be 0 by default for single-gpu training)
@@ -268,11 +295,29 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
             with torch.autocast(
                 device_type="cuda" if device.type == "cuda" else "cpu", dtype=torch.float16, enabled=cfg.amp
             ):
-                images = example["image"].to(device)
+                images = example["image"].to(device)  # (B, 3, H, W)
                 pixel_coordinates = example["pixel_coordinates"].to(device)
 
-                # Augment.
-                images, pixel_coordinates = train_augment(images, pixel_coordinates)
+                # add a depth channel if needed
+                if cfg.in_channels >= 4:  # noqa: PLR2004
+                    depth_images = example["depth_image"].to(device)
+                    images = torch.cat((images, depth_images[..., None, :, :]), dim=-3)  # (B, 4, H, W)
+
+                # if doing the transplantation augmentation but not using the segmentation image in the model, we need
+                # to add the segmentation image as an additional channel for just the augmentation and slice out the
+                # rgbd channels afterwards
+                if train_augment.cfg.random_transplantation_with_depth and cfg.in_channels < 5:  # noqa: PLR2004
+                    seg_images = example["segmentation_image"].to(device)
+                    if cfg.in_channels == 4:  # noqa: PLR2004
+                        images_aug = torch.cat((images, seg_images[..., None, :, :]), dim=-3)
+                    else:
+                        images_aug = torch.cat(
+                            (images, depth_images[..., None, :, :], seg_images[..., None, :, :]), dim=-3
+                        )
+                else:
+                    images_aug = images
+                _images, pixel_coordinates = train_augment(images_aug, pixel_coordinates)
+                images = _images[..., : cfg.in_channels, :, :]  # (B, in_channels, H, W)
 
                 # Forward pass.
                 if cfg.output_type == "yolo":
@@ -283,7 +328,9 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     loss_o2m = loss_fn(pred_o2m, pixel_coordinates)
                     loss = loss_o2o + loss_o2m  # TODO(ahl): check whether this is batch-averaged
                 else:
-                    pred = model(images)  # TODO(pculbert): add some validation / shape checking.
+                    pred = model(images)
+                    if pred.shape[-1] != 2:  # noqa: PLR2004
+                        pred = pred.reshape(*pred.shape[:-1], cfg.n_keypoints, 2)
                     loss = loss_fn(pred, pixel_coordinates)
 
             # Log loss.
@@ -320,12 +367,17 @@ def train(cfg: TrainConfig, rank: int = 0) -> None:  # noqa: PLR0912, PLR0915
                     ):
                         images = example["image"].to(device)
                         pixel_coordinates = example["pixel_coordinates"].to(device)
-                        images, pixel_coordinates = val_augment(images, pixel_coordinates)  # augment
+                        if cfg.in_channels == 4:  # noqa: PLR2004
+                            depth_images = example["depth_image"].to(device)
+                            images = torch.cat((images, depth_images[..., None, :, :]), dim=-3)
+                        images, pixel_coordinates = val_augment(images, pixel_coordinates)
 
                         # Forward pass.
                         # [NOTE] when the model is in eval mode, the yolo model will only return the one-to-one path,
                         # so it becomes easier to compare the performance of the yolo model to the other models
                         pred = model(images)
+                        if pred.shape[-1] != 2:  # noqa: PLR2004
+                            pred = pred.reshape(*pred.shape[:-1], cfg.n_keypoints, 2)
                         loss = loss_fn(pred, pixel_coordinates)
 
                     val_loss += loss.item()

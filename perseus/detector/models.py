@@ -1,13 +1,9 @@
-from typing import Tuple, Union
-
 import numpy as np
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch import nn
 from torchvision import models
-from ultralytics.nn.autobackend import AutoBackend
 
-from perseus import ROOT
+# from ultralytics.nn.autobackend import AutoBackend
 
 
 class KeypointCNN(nn.Module):
@@ -171,119 +167,119 @@ class KeypointGaussian(torch.nn.Module):
             raise ValueError(f"Invalid cov_type: {self.cov_type}")
 
 
-class YOLOModel(nn.Module):
-    """YOLO-based backbone for keypoint detection on the cube."""
+# class YOLOModel(nn.Module):
+#     """YOLO-based backbone for keypoint detection on the cube."""
 
-    def __init__(self, version: int = 10, size: str = "n", n_keypoints: int = 8) -> None:
-        """Initialize the YOLO model.
+#     def __init__(self, version: int = 10, size: str = "n", n_keypoints: int = 8) -> None:
+#         """Initialize the YOLO model.
 
-        Args:
-            version: The version of YOLO to use. Must be 9 or 10.
-            size: The size of the model to use.
-                If v9, must be one of ["t", "s", "m", "c", "e"].
-                If v10, must be one of ["n", "s", "m", "l", "x"].
-            n_keypoints: The number of keypoints to predict.
-        """
-        super().__init__()
+#         Args:
+#             version: The version of YOLO to use. Must be 9 or 10.
+#             size: The size of the model to use.
+#                 If v9, must be one of ["t", "s", "m", "c", "e"].
+#                 If v10, must be one of ["n", "s", "m", "l", "x"].
+#             n_keypoints: The number of keypoints to predict.
+#         """
+#         super().__init__()
 
-        # [DEBUG] for now, only allow YOLOv10
-        assert version == 10, "[DEBUG] only allow v10 for now!"  # noqa: PLR2004
+#         # [DEBUG] for now, only allow YOLOv10
+#         assert version == 10, "[DEBUG] only allow v10 for now!"  # noqa: PLR2004
 
-        # checking types
-        if not isinstance(version, int):
-            raise ValueError(f"Invalid version: {version}. Must be an integer.")
-        if not isinstance(size, str):
-            raise ValueError(f"Invalid size: {size}. Must be a string.")
+#         # checking types
+#         if not isinstance(version, int):
+#             raise ValueError(f"Invalid version: {version}. Must be an integer.")
+#         if not isinstance(size, str):
+#             raise ValueError(f"Invalid size: {size}. Must be a string.")
 
-        # checking values
-        if version not in [9, 10]:
-            raise ValueError(f"Invalid version: {version}. Must be one of [9, 10].")
-        if version == 9 and size not in ["t", "s", "m", "c", "e"]:  # noqa: PLR2004
-            raise ValueError(f"Invalid size: {size}. Must be one of ['t', 's', 'm', 'c', 'e'].")
-        if version == 10 and size not in ["n", "s", "m", "l", "x"]:  # noqa: PLR2004
-            raise ValueError(f"Invalid size: {size}. Must be one of ['n', 's', 'm', 'l', 'x'].")
+#         # checking values
+#         if version not in [9, 10]:
+#             raise ValueError(f"Invalid version: {version}. Must be one of [9, 10].")
+#         if version == 9 and size not in ["t", "s", "m", "c", "e"]:  # noqa: PLR2004
+#             raise ValueError(f"Invalid size: {size}. Must be one of ['t', 's', 'm', 'c', 'e'].")
+#         if version == 10 and size not in ["n", "s", "m", "l", "x"]:  # noqa: PLR2004
+#             raise ValueError(f"Invalid size: {size}. Must be one of ['n', 's', 'm', 'l', 'x'].")
 
-        self.version = version
-        self.n_keypoints = n_keypoints
+#         self.version = version
+#         self.n_keypoints = n_keypoints
 
-        # loading yolo model
-        model_str = ROOT + f"/outputs/yolo/yolov{version}{size}.pt"
-        yolo_model = AutoBackend(model_str, device=torch.device("cuda"))  # ultralytics AutoBackend object
-        self.yolo_detector = yolo_model.model  # ultralytics Detector object
+#         # loading yolo model
+#         model_str = ROOT + f"/outputs/yolo/yolov{version}{size}.pt"
+#         yolo_model = AutoBackend(model_str, device=torch.device("cuda"))  # ultralytics AutoBackend object
+#         self.yolo_detector = yolo_model.model  # ultralytics Detector object
 
-        # keypoint head
-        # The yolo model outputs 3 feature maps of shape (B, 144, 32/16/8, 32/16/8) for each of the one2many and
-        # one2one computation branches. Both branches are used during training, but only the one2one branch is used
-        # during inference.
-        self.conv32x32_o2m = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.conv16x16_o2m = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.conv8x8_o2m = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
+#         # keypoint head
+#         # The yolo model outputs 3 feature maps of shape (B, 144, 32/16/8, 32/16/8) for each of the one2many and
+#         # one2one computation branches. Both branches are used during training, but only the one2one branch is used
+#         # during inference.
+#         self.conv32x32_o2m = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
+#         self.conv16x16_o2m = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
+#         self.conv8x8_o2m = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
 
-        self.conv32x32_o2o = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.conv16x16_o2o = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.conv8x8_o2o = nn.Sequential(
-            nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
+#         self.conv32x32_o2o = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
+#         self.conv16x16_o2o = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
+#         self.conv8x8_o2o = nn.Sequential(
+#             nn.Conv2d(in_channels=144, out_channels=2 * n_keypoints, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#         )
 
-        self.layer_weights = nn.Parameter(torch.ones(3))
-        self.linear = nn.Linear(32 * 32, 1)  # TODO(ahl): pretty aggressive reduction here, might need to be adjusted
+#         self.layer_weights = nn.Parameter(torch.ones(3))
+#         self.linear = nn.Linear(32 * 32, 1)  # TODO(ahl): pretty aggressive reduction here, might need to be adjusted
 
-    def forward(self, x: torch.Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """Forward pass of the network.
+#     def forward(self, x: torch.Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+#         """Forward pass of the network.
 
-        Args:
-            x: tensor of input images, shape=(batch_size, 3, H, W).
+#         Args:
+#             x: tensor of input images, shape=(batch_size, 3, H, W).
 
-        Returns:
-            y_o2m: tensor of predicted pixel coordinates for the one2many branch, shape=(batch_size, 2 * n_keypoints).
-            y_o2o: tensor of predicted pixel coordinates for the one2one branch, shape=(batch_size, 2 * n_keypoints).
-        """
-        # yolo part
-        if self.training:
-            fpn_dicts = self.yolo_detector(x)
-        else:
-            _detections, fpn_dicts = self.yolo_detector(x)  # [NOTE] detections unused
-        o2m_features = fpn_dicts["one2many"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
-        o2o_features = fpn_dicts["one2one"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
+#         Returns:
+#             y_o2m: tensor of predicted pixel coordinates for the one2many branch, shape=(batch_size, 2 * n_keypoints).
+#             y_o2o: tensor of predicted pixel coordinates for the one2one branch, shape=(batch_size, 2 * n_keypoints).
+#         """
+#         # yolo part
+#         if self.training:
+#             fpn_dicts = self.yolo_detector(x)
+#         else:
+#             _detections, fpn_dicts = self.yolo_detector(x)  # [NOTE] detections unused
+#         o2m_features = fpn_dicts["one2many"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
+#         o2o_features = fpn_dicts["one2one"]  # 3-tuple of features of shape (B, 144, 32/16/8, 32/16/8)
 
-        # keypoint part
-        y_o2o_32x32 = self.conv32x32_o2o(o2o_features[0])  # (B, 2 * n_keypoints, 32, 32)
-        y_o2o_16x16 = F.interpolate(self.conv16x16_o2o(o2o_features[1]), scale_factor=2)  # (B, 2 * n_keypoints, 32, 32)
-        y_o2o_8x8 = F.interpolate(self.conv8x8_o2o(o2o_features[2]), scale_factor=4)  # (B, 2 * n_keypoints, 32, 32)
-        y_o2o = (
-            self.layer_weights[0] * y_o2o_32x32
-            + self.layer_weights[1] * y_o2o_16x16
-            + self.layer_weights[2] * y_o2o_8x8
-        ) / self.layer_weights.sum()  # (B, 2 * n_keypoints, 32, 32), learned weighted average of the three scales
-        y_o2o = self.linear(y_o2o.view(*y_o2o.shape[:-2], -1)).squeeze(-1)
+#         # keypoint part
+#         y_o2o_32x32 = self.conv32x32_o2o(o2o_features[0])  # (B, 2 * n_keypoints, 32, 32)
+#         y_o2o_16x16 = F.interpolate(self.conv16x16_o2o(o2o_features[1]), scale_factor=2)  # (B, 2 * n_keypoints, 32, 32)  # noqa: E501
+#         y_o2o_8x8 = F.interpolate(self.conv8x8_o2o(o2o_features[2]), scale_factor=4)  # (B, 2 * n_keypoints, 32, 32)
+#         y_o2o = (
+#             self.layer_weights[0] * y_o2o_32x32
+#             + self.layer_weights[1] * y_o2o_16x16
+#             + self.layer_weights[2] * y_o2o_8x8
+#         ) / self.layer_weights.sum()  # (B, 2 * n_keypoints, 32, 32), learned weighted average of the three scales
+#         y_o2o = self.linear(y_o2o.view(*y_o2o.shape[:-2], -1)).squeeze(-1)
 
-        # only do one2many computation during training
-        if self.training:
-            y_o2m_32x32 = self.conv32x32_o2m(o2m_features[0])  # (B, 2 * n_keypoints, 32, 32)
-            y_o2m_16x16 = F.interpolate(self.conv16x16_o2m(o2m_features[1]), scale_factor=2)
-            y_o2m_8x8 = F.interpolate(self.conv8x8_o2m(o2m_features[2]), scale_factor=4)
-            y_o2m = (
-                self.layer_weights[0] * y_o2m_32x32
-                + self.layer_weights[1] * y_o2m_16x16
-                + self.layer_weights[2] * y_o2m_8x8
-            ) / self.layer_weights.sum()
-            y_o2m = self.linear(y_o2m.view(*y_o2m.shape[:-2], -1)).squeeze(-1)  # (B, 2 * n_keypoints)
-            return y_o2o, y_o2m
+#         # only do one2many computation during training
+#         if self.training:
+#             y_o2m_32x32 = self.conv32x32_o2m(o2m_features[0])  # (B, 2 * n_keypoints, 32, 32)
+#             y_o2m_16x16 = F.interpolate(self.conv16x16_o2m(o2m_features[1]), scale_factor=2)
+#             y_o2m_8x8 = F.interpolate(self.conv8x8_o2m(o2m_features[2]), scale_factor=4)
+#             y_o2m = (
+#                 self.layer_weights[0] * y_o2m_32x32
+#                 + self.layer_weights[1] * y_o2m_16x16
+#                 + self.layer_weights[2] * y_o2m_8x8
+#             ) / self.layer_weights.sum()
+#             y_o2m = self.linear(y_o2m.view(*y_o2m.shape[:-2], -1)).squeeze(-1)  # (B, 2 * n_keypoints)
+#             return y_o2o, y_o2m
 
-        return y_o2o
+#         return y_o2o

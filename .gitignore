@@ -166,5 +166,5 @@ cython_debug/
 wandb
 outputs
 
-# outputs
-outputs
+# script output
+scripts/*.png
