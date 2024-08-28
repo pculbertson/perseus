@@ -29,8 +29,8 @@ dependencies = [
     "qasync>=0.27.1",
     "pypose>=0.6.7",
     "trimesh>=4.4.7",
-    "ultralytics>=8.2.78",
-    "super-gradients>=3.7.1",
+    # "ultralytics>=8.2.78",
+    # "super-gradients>=3.7.1",
     "wandb>=0.17.7",
 ]
 
