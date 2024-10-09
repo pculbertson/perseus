@@ -99,8 +99,19 @@ def main(serial_number: int, window_width: int = 1600, window_height: int = 800)
     cv2.resizeWindow(window_name, window_width, window_height)
 
     zed_camera = ZEDCamera(serial_number, depth=True)  # Ensure depth is enabled
-    model = KeypointCNN(num_channels=4)  # Use 4 channels for RGBD
-    state_dict = torch.load(f"{ROOT}/outputs/models/4b8hrqoo.pth", weights_only=True)
+
+    # RGBD uses 4, RGB uses 3, modify
+    num_channels = 3
+    if num_channels == 4:  # noqa: PLR2004
+        ckpt = "4b8hrqoo.pth"
+    elif num_channels == 3:  # noqa: PLR2004
+        ckpt = "1hj7an9g.pth"
+    else:
+        raise ValueError
+
+    model = KeypointCNN(num_channels=num_channels)  # Use 4 channels for RGBD
+    state_dict = torch.load(f"{ROOT}/outputs/models/{ckpt}", weights_only=True)
+
     for key in list(state_dict.keys()):
         if "module." in key:
             state_dict[key.replace("module.", "")] = state_dict.pop(key)
@@ -113,7 +124,7 @@ def main(serial_number: int, window_width: int = 1600, window_height: int = 800)
             continue
 
         with torch.no_grad():
-            image_tensor = torch.from_numpy(frame).permute(2, 0, 1).float()
+            image_tensor = torch.from_numpy(frame).permute(2, 0, 1).float()[:num_channels, ...]
             raw_pixel_coordinates = model(image_tensor[None, ...]).reshape(-1, 2).detach()
             keypoints = (
                 kornia.geometry.denormalize_pixel_coordinates(raw_pixel_coordinates, model.H, model.W).cpu().numpy()
@@ -148,5 +159,5 @@ def main(serial_number: int, window_width: int = 1600, window_height: int = 800)
 
 
 if __name__ == "__main__":
-    serial_number = 14390641  # options: 12746523, 14390641, 19798856
+    serial_number = 19798856  # options: 12746523, 14390641, 19798856
     main(serial_number, window_width=1600, window_height=800)
