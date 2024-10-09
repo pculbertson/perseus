@@ -13,7 +13,7 @@ from tqdm import tqdm
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
 from perseus.detector.data import KeypointDatasetConfig, PrunedKeypointDataset
-from perseus.detector.models import KeypointCNN, KeypointGaussian
+from perseus.detector.models import KeypointCNN
 
 matplotlib.use("Agg")
 
@@ -27,7 +27,6 @@ class ValConfig:
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(
         dataset_path=f"{ROOT}/data/pruned_dataset/pruned.hdf5"
     )
-    pruned: bool = True
     depth: bool = True
     augmentation_config: AugmentationConfig = AugmentationConfig()
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -90,10 +89,7 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model.
-    if cfg.output_type == "gaussian":
-        model = KeypointGaussian()
-    else:
-        model = KeypointCNN(num_channels=4 if cfg.depth else 3)
+    model = KeypointCNN(num_channels=4 if cfg.depth else 3)
     state_dict = torch.load(str(cfg.model_path), weights_only=True)
     for key in list(state_dict.keys()):
         if "module." in key:
