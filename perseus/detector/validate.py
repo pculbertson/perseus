@@ -22,8 +22,8 @@ matplotlib.use("Agg")
 class ValConfig:
     """Validation configuration."""
 
-    model_path: str = f"{ROOT}/outputs/models/wzbx1og6.pth"  # RGBD
-    batch_size: int = 256 * 8
+    model_path: str = f"{ROOT}/outputs/models/4b8hrqoo.pth"  # RGBD
+    batch_size: int = 256 * 4
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(
         dataset_path=f"{ROOT}/data/pruned_dataset/pruned.hdf5"
     )
@@ -184,9 +184,12 @@ def main() -> None:
 
     # second, do all plotting on CPU with multiprocessing on the output data (avoids fork issues with CUDA)
     num_processes = min(mp.cpu_count(), len(plot_args))  # Adjust number of processes
+    print("Preparing to plot validation images...")
     with mp.Pool(processes=num_processes) as pool:
         full_args = [(arg + (output_dir, cfg, n_keypoints)) for arg in plot_args]
         list(tqdm(pool.imap(plot_and_save, full_args), total=len(full_args), desc="Plotting"))
+
+    print("Validation plots generated!")
 
 
 if __name__ == "__main__":

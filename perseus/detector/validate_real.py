@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import imageio.v3 as imageio
 import matplotlib
 import torch
 import tyro
@@ -103,8 +104,6 @@ def validate(cfg: ValConfig) -> None:  # noqa: PLR0912, PLR0915
             plt.savefig(f"{ROOT}/outputs/figures/{ckpt_name}/val_{ii}.png")
 
     # Create gif from images.
-    import imageio.v3 as imageio
-
     output_path = Path(f"{ROOT}/outputs/figures/{ckpt_name}")
 
     # Sort image files (without leading zeros).
