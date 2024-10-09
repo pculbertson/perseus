@@ -27,7 +27,7 @@ class ValConfig:
     # model_path: Path = Path(f"{ROOT}/outputs/models/ibkvjlvb.pth")
     # model_path: Path = Path(f"{ROOT}/outputs/models/xd5ccyzs.pth")
     # model_path: Path = Path(f"{ROOT}/outputs/models/js2al4fl.pth")
-    model_path: Path = Path(f"{ROOT}/outputs/models/5bkci9hx.pth")
+    model_path: Path = Path(f"{ROOT}/outputs/models/4b8hrqoo.pth")
 
     dataset_cfg: KeypointDatasetConfig = KeypointDatasetConfig(
         dataset_path=f"{ROOT}/data/real_imgs",
