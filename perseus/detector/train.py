@@ -135,7 +135,7 @@ def initialize_training(  # noqa: PLR0912, PLR0915
             raise ValueError(f"Invalid covariance type: {model.cov_type}! Must be 'chol' or 'diag'.")
     elif cfg.output_type == "regression":
         model = KeypointCNN(cfg.n_keypoints, cfg.in_channels, train_dataset.H, train_dataset.W)
-        loss_fn = nn.L1Loss()
+        loss_fn = nn.SmoothL1Loss(beta=1.0)
     # elif cfg.output_type == "yolo":
     #     model = YOLOModel(version=10, size="n", n_keypoints=8)
     #     loss_fn = nn.SmoothL1Loss(beta=1.0)
