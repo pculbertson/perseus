@@ -63,7 +63,7 @@ class TrainConfig:
 
     # Model parameters.
     n_keypoints: int = 8
-    in_channels: int = 4  # 3 for RGB, 4 for RGBD, 5 for RGBDSeg
+    in_channels: int = 4  # 3 for RGB, 4 for RGBD
 
     # Whether to use multi-gpu training
     multigpu: bool = True
