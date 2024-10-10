@@ -1,4 +1,6 @@
 # perseus
+[NOTE] Oct. 9, 2024. This branch holds the state of the repo before unused information was pruned away for the code release of the DROP paper.
+
 A quick-and-dirty vision-based object tracker for in-hand manipulation.
 
 ## Installation
