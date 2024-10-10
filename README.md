@@ -92,3 +92,10 @@ python perseus/detector/validate_real.py model_path=<path/to/model.pth> dataset_
 The main difference here is that since there are no ground truth keypoints, you can only see how reasonable the predictions are overlayed on real images.
 
 The better way to evaluate the keypoint detector on real-world data is to use the script `/path/to/perseus/scripts/streaming.py`, which will stream images from a real-world ZED camera while overlaying the keypoint predictions onto it in real time. To properly use this, you should edit the `serial_number` argument at the bottom of the script to match the serial number of the camera you would like to use to stream.
+
+### Final Models
+The checkpoint for the final RGBD model used in the paper is `4b8hrqoo.pth`. The checkpoint for the RGB model is `1hj7an9g.pth`.
+
+### Other Useful Scripts
+
+There are a number of useful scripts for visualizing the data under the `scripts` directory. To use them, modify the path to the dataset you would like to visualize (bottom of each script). They will help visualize augmentations, training/test data, or images of various segmentation ratios from an unpruned dataset.
