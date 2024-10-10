@@ -1,6 +1,6 @@
 # Perseus
 
-This repository holds the source code for the data collection and cube keypoint tracker used in the paper ["DROP: Dexterous Reorientation via Online Planning"](https://arxiv.org/abs/2409.14562).
+This repository holds the source code for the data collection and cube keypoint tracker used in the paper ["DROP: Dexterous Reorientation via Online Planning"](https://arxiv.org/abs/2409.14562), which we collectively refer to as `perseus`.
 
 ## Installation
 1. Clone the repository
@@ -59,6 +59,8 @@ Step 4: To prune a merged dataset, edit the paths in the `/path/to/perseus/data/
 python /path/to/perseus/data/prune_dataset.py
 ```
 After doing this, the path to this dataset will be passed into the training or validation config object below. There are assumed default paths, so if you modify any dataset paths or names, you should double check what you pass into the train and/or validation scripts.
+
+Unfortunately, the dataset used to train the model is quite large, and we are not currently hosting it. If there is enough interest, we will consider finding a way to make it widely available. Please open an issue or shoot an email out if you would like access to the data, and we will attempt to find a solution.
 
 ### Training and Evaluating the Predictor
 
