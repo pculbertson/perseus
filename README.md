@@ -99,3 +99,15 @@ The checkpoint for the final RGBD model used in the paper is `4b8hrqoo.pth`. The
 ### Other Useful Scripts
 
 There are a number of useful scripts for visualizing the data under the `scripts` directory. To use them, modify the path to the dataset you would like to visualize (bottom of each script). They will help visualize augmentations, training/test data, or images of various segmentation ratios from an unpruned dataset.
+
+## Citation
+If you found this work useful, please cite our paper:
+```
+@article{li2024_drop,
+    title={DROP: Dexterous Reorientation via Online Planning},
+    author={Albert H. Li, Preston Culbertson, Vince Kurtz, and Aaron D. Ames},
+    year={2024},
+    journal={arXiv preprint arXiv:2409.14562},
+    note={Available at: \url{https://arxiv.org/abs/2409.14562}},
+}
+```
