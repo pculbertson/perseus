@@ -101,6 +101,5 @@ def main(hdf5_path: str, pruned: bool = True) -> None:
 
 
 if __name__ == "__main__":
-    # hdf5_path = f"{ROOT}/data/merged_lazy/merged.hdf5"
     hdf5_path = f"{ROOT}/data/pruned_dataset/pruned.hdf5"
     main(hdf5_path, pruned=True)
