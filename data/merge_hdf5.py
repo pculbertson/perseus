@@ -527,7 +527,7 @@ if __name__ == "__main__":
         f"{ROOT}/data/qwerty17/mjc_data.hdf5",
         f"{ROOT}/data/qwerty18/mjc_data.hdf5",
         f"{ROOT}/data/qwerty19/mjc_data.hdf5",
-    ]
-    output_dir = f"{ROOT}/data/merged_lazy"
+    ]  # MODIFY THIS LIST OF PATHS
+    output_dir = f"{ROOT}/data/merged_lazy"  # MODIFY THE OUTPUT DIRECTORY FOR THE DATASET
     merge(hdf5_list, output_dir, shuffle=False)
     print("Merging complete.")

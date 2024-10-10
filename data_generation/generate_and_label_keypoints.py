@@ -5,7 +5,6 @@ import os
 import h5py
 import numpy as np
 import torch
-import trimesh
 from PIL import Image
 from tqdm import tqdm
 
@@ -35,45 +34,6 @@ parser.add_argument(
     help="Plot debug images. Default: False.",
     default=False,
 )
-
-
-def get_keypoints(args: dict) -> np.ndarray:
-    """Get keypoints for a given job."""
-    # Load keypoints.
-    keypoints_filename = os.path.join(args.job_dir, f"{args.asset_id}_keypoints.json")
-    if os.path.exists(keypoints_filename):
-        with open(keypoints_filename, "r") as f:
-            keypoints = json.load(f)
-    else:
-        keypoints = generate_keypoints(args)
-
-    # Return keypoints.
-    return keypoints
-
-
-def generate_keypoints(args: dict) -> np.ndarray:
-    """Generate keypoints for a given model."""
-    # Load object.
-    metadata_filename = os.path.join(args.job_dir, args.job_id, "metadata.json")
-    with open(metadata_filename, "r") as f:
-        metadata = json.load(f)
-
-    # Get model filename.
-    asset_info = [dd for dd in metadata["instances"] if dd["asset_id"] == args.asset_id][0]
-    model_filename = asset_info["render_filename"]
-
-    mesh = trimesh.load(model_filename, force="mesh")
-
-    # Generate keypoints.
-    keypoints = trimesh.sample.sample_surface(mesh, args.num_keypoints)[0]
-
-    # Save keypoints.
-    keypoints_filename = os.path.join(args.job_dir, f"{args.asset_id}_keypoints.json")
-    with open(keypoints_filename, "w") as f:
-        json.dump(keypoints.tolist(), f)
-
-    # Return keypoints.
-    return keypoints
 
 
 def generate_data(args: dict) -> tuple:
@@ -224,7 +184,7 @@ def main(args: dict) -> None:  # noqa: PLR0915
     for jj, aa in zip(job_ids, args_list, strict=False):
         aa.job_id = jj
 
-    keypoints = get_keypoints(args_list[0])
+    keypoints = [[-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1], [1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1]]
     for aa in args_list:
         aa.keypoints = keypoints
 

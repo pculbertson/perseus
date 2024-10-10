@@ -155,6 +155,7 @@ def prune_dataset(
 
 
 if __name__ == "__main__":
+    # MODIFY THESE PATHS TO WHATEVER YOU DESIRE
     input_hdf5_path = os.path.join(ROOT, "data/merged_lazy/merged.hdf5")
     output_hdf5_path = os.path.join(ROOT, "data/pruned_dataset/pruned.hdf5")
     output_data_dir = os.path.join(ROOT, "data/pruned_dataset/images")

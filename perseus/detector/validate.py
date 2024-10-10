@@ -12,8 +12,8 @@ from tqdm import tqdm
 
 from perseus import ROOT
 from perseus.detector.augmentations import AugmentationConfig, KeypointAugmentation
-from perseus.detector.data import KeypointDataset, KeypointDatasetConfig, PrunedKeypointDataset
-from perseus.detector.models import KeypointCNN, KeypointGaussian
+from perseus.detector.data import KeypointDatasetConfig, PrunedKeypointDataset
+from perseus.detector.models import KeypointCNN
 
 matplotlib.use("Agg")
 
@@ -22,17 +22,15 @@ matplotlib.use("Agg")
 class ValConfig:
     """Validation configuration."""
 
-    model_path: str = f"{ROOT}/outputs/models/wzbx1og6.pth"  # RGBD
-    batch_size: int = 256 * 8
+    model_path: str = f"{ROOT}/outputs/models/4b8hrqoo.pth"  # RGBD
+    batch_size: int = 256 * 4
     dataset_config: KeypointDatasetConfig = KeypointDatasetConfig(
         dataset_path=f"{ROOT}/data/pruned_dataset/pruned.hdf5"
     )
-    pruned: bool = True
     depth: bool = True
     augmentation_config: AugmentationConfig = AugmentationConfig()
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     use_train: bool = False
-    output_type: str = "regression"
 
 
 def plot_and_save(args: tuple) -> None:
@@ -91,10 +89,7 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model.
-    if cfg.output_type == "gaussian":
-        model = KeypointGaussian()
-    else:
-        model = KeypointCNN(num_channels=4 if cfg.depth else 3)
+    model = KeypointCNN(num_channels=4 if cfg.depth else 3)
     state_dict = torch.load(str(cfg.model_path), weights_only=True)
     for key in list(state_dict.keys()):
         if "module." in key:
@@ -103,10 +98,7 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
     model.eval()
 
     # Create dataloader.
-    if cfg.pruned:
-        val_dataset = PrunedKeypointDataset(cfg.dataset_config, train=cfg.use_train)
-    else:
-        val_dataset = KeypointDataset(cfg.dataset_config, train=cfg.use_train)
+    val_dataset = PrunedKeypointDataset(cfg.dataset_config, train=cfg.use_train)
     val_dataloader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=cfg.batch_size,
@@ -134,26 +126,13 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
 
         # Forward pass.
         with torch.no_grad():
-            if cfg.output_type == "gaussian":
-                raise NotImplementedError("TODO: put this back.")
-                # mu, L = model(image)
-                # predicted_pixel_coordinates = mu.reshape(1, -1, 2).detach()
-                # predicted_pixel_vars = (
-                #     torch.diagonal(L @ L.transpose(-1, -2), dim1=1, dim2=2).reshape(1, -1, 2).detach()
-                # )
-                # loss = (
-                #     -torch.distributions.multivariate_normal.MultivariateNormal(mu, scale_tril=L)
-                #     .log_prob(pixel_coordinates.reshape(1, -1))
-                #     .mean()
-                # )
-            else:
-                predicted_pixel_coordinates = model(images)
-                loss = torch.nn.SmoothL1Loss(beta=1.0, reduction="none")(
-                    pixel_coordinates.reshape(*pixel_coordinates.shape[:-2], -1),
-                    predicted_pixel_coordinates,
-                )
-                losses.append(loss)
-                loss = loss.mean(dim=-1)
+            predicted_pixel_coordinates = model(images)
+            loss = torch.nn.SmoothL1Loss(beta=1.0, reduction="none")(
+                pixel_coordinates.reshape(*pixel_coordinates.shape[:-2], -1),
+                predicted_pixel_coordinates,
+            )
+            losses.append(loss)
+            loss = loss.mean(dim=-1)
 
             # reshape
             pixel_coordinates = pixel_coordinates.detach()  # (B, K, 2)
@@ -172,9 +151,6 @@ def validate(cfg: ValConfig) -> tuple:  # noqa: PLR0915
                 .cpu()
                 .numpy()
             )
-
-        if cfg.output_type == "gaussian":
-            raise NotImplementedError("TODO: put this back. Old code is commented out at bottom of this file.")
 
         # Prepare arguments for plotting (move to CPU here)
         for j, (image, pixel_coordinate, predicted_pixel_coordinate) in enumerate(
@@ -208,131 +184,13 @@ def main() -> None:
 
     # second, do all plotting on CPU with multiprocessing on the output data (avoids fork issues with CUDA)
     num_processes = min(mp.cpu_count(), len(plot_args))  # Adjust number of processes
+    print("Preparing to plot validation images...")
     with mp.Pool(processes=num_processes) as pool:
         full_args = [(arg + (output_dir, cfg, n_keypoints)) for arg in plot_args]
         list(tqdm(pool.imap(plot_and_save, full_args), total=len(full_args), desc="Plotting"))
 
+    print("Validation plots generated!")
+
 
 if __name__ == "__main__":
     main()
-
-    # ######## #
-    # OLD CODE #
-    # ######## #
-
-    # # Use the collected results for plotting.
-    # for i, image, pixel_coordinates, predicted_pixel_coordinates, L in results:
-    #     plt.close("all")
-
-    #     pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
-    #         pixel_coordinates, val_dataset.H, val_dataset.W
-    #     ).cpu()
-
-    #     predicted_pixel_coordinates = kornia.geometry.denormalize_pixel_coordinates(
-    #         predicted_pixel_coordinates, val_dataset.H, val_dataset.W
-    #     ).cpu()
-
-    #     fig, ax = plt.subplots()
-
-    #     # Plot.
-    #     ax.imshow(image[0].permute(1, 2, 0).cpu().numpy())
-
-    #     # Plot ground truth keypoints with jet colormap.
-    #     jet_colors = plt.cm.jet(np.linspace(0, 1, model.n_keypoints))
-
-    #     for j in range(model.n_keypoints):
-    #         ax.scatter(
-    #             pixel_coordinates[0, j, 0],
-    #             pixel_coordinates[0, j, 1],
-    #             c=jet_colors[j],
-    #             alpha=0.8,
-    #             marker="*",
-    #         )
-    #     pred_u = predicted_pixel_coordinates[0, :, 0].detach().cpu().numpy()
-    #     pred_v = predicted_pixel_coordinates[0, :, 1].detach().cpu().numpy()
-
-    #     if cfg.output_type == "gaussian" and L is not None:
-    #         # Compute sizes of ellipses in pixel coordinates.
-    #         sigma = L[0] @ L[0].T
-    #         sigma_pixels = sigma * ((val_dataset.H / 2) ** 2)
-
-    #         for j in range(model.n_keypoints):
-    #             # Loop through block diagonal of covariance matrix, plotting confidence ellipses.
-
-    #             # Compute eigenvalues and eigenvectors.
-    #             eig_vals, eig_vecs = torch.linalg.eigh(
-    #                 sigma_pixels[2 * j : 2 * j + 2, 2 * j : 2 * j + 2],
-    #             )
-
-    #             # Compute angle of rotation.
-    #             theta = (
-    #                 torch.atan2(eig_vecs[1, 0], eig_vecs[0, 0])
-    #                 .detach()
-    #                 .cpu()
-    #                 .numpy()
-    #             )
-
-    #             # Compute width and height of ellipse.
-    #             width = 2 * torch.sqrt(eig_vals[0]).detach().cpu().numpy()
-    #             height = 2 * torch.sqrt(eig_vals[1]).detach().cpu().numpy()
-
-    #             ax.scatter(
-    #                 pred_u[j],
-    #                 pred_v[j],
-    #                 c=jet_colors[j],
-    #                 alpha=0.8,
-    #             )
-    #     else:
-    #         for j in range(model.n_keypoints):
-    #             ax.scatter(
-    #                 pred_u[j],
-    #                 pred_v[j],
-    #                 c=jet_colors[j],
-    #                 alpha=0.8,
-    #             )
-
-    #     # Draw lines between predicted and ground truth keypoints.
-    #     for j in range(model.n_keypoints):
-    #         if cfg.output_type == "gaussian" and L is not None:
-    #             ax.plot(
-    #                 [
-    #                     (val_dataset.H / 2)
-    #                     * (pixel_coordinates[0, j, 0].cpu() + 1),
-    #                     (val_dataset.H / 2)
-    #                     * (predicted_pixel_coordinates[0, j, 0].cpu() + 1),
-    #                 ],
-    #                 [
-    #                     (val_dataset.W / 2)
-    #                     * (pixel_coordinates[0, j, 1].cpu() + 1),
-    #                     (val_dataset.W / 2)
-    #                     * (predicted_pixel_coordinates[0, j, 1].cpu() + 1),
-    #                 ],
-    #                 c="k",
-    #                 alpha=np.exp(
-    #                     -torch.sqrt(
-    #                         L[0, 2 * j, 2 * j] ** 2
-    #                         + L[0, 2 * j + 1, 2 * j + 1] ** 2
-    #                     )
-    #                     .detach()
-    #                     .cpu()
-    #                     .numpy()
-    #                 ),
-    #             )
-    #         else:
-    #             ax.plot(
-    #                 [
-    #                     pixel_coordinates[0, j, 0].cpu(),
-    #                     predicted_pixel_coordinates[0, j, 0].cpu(),
-    #                 ],
-    #                 [
-    #                     pixel_coordinates[0, j, 1].cpu(),
-    #                     predicted_pixel_coordinates[0, j, 1].cpu(),
-    #                 ],
-    #                 c="k",
-    #                 alpha=0.9,
-    #             )
-
-    #     # Save figure as png.
-    #     plt.savefig(
-    #         output_dir / f"val_{i}.png", bbox_inches="tight", pad_inches=0
-    #     )
